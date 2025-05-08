@@ -36,3 +36,6 @@ wheels/
 # Virtual Environment
 venv/
 ENV/ 
+
+# 一時ファイル
+planning.txt

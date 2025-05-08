@@ -1,5 +1,7 @@
 - flaskでwebサーバー構築
 - webからスマホで操作（起動・オプション）
+- webからSDカードのアンマウント
+    - webにログの表示
 - Google Photo libraryでクラウドのアルバム表示
     - 動画は一旦未対応
 - sunoでbgm生成

@@ -398,11 +398,14 @@ class SlideshowApp:
                 success = progress.get('success', 0)
                 failed = progress.get('failed', 0)
                 completed = progress.get('completed', False)
+                album_name = progress.get('album_name', '')
                 
                 if completed:
-                    status_text = f"アップロード完了: {success}/{total} (失敗 {failed})"
+                    status_text = f"{album_name}にアップロードされました ({success}/{total}枚)"
                 else:
                     status_text = f"アップロード中: {success}/{total} (失敗 {failed})"
+                    if album_name:
+                        status_text += f" - アルバム: {album_name}"
             except Exception as e:
                 logger.debug(f"進捗ファイルの読み込みに失敗しました: {e}")
         # ラベルを更新

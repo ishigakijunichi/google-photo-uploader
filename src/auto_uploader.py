@@ -163,7 +163,8 @@ def upload_photos(dcim_path, album_name=None, show_slideshow=False, fullscreen=T
         'failed': 0,
         'current': 0,
         'completed': False,
-        'files': all_files  # スライドショーでアップロード対象のみ表示するため
+        'files': all_files,  # スライドショーでアップロード対象のみ表示するため
+        'album_name': album_name or DEFAULT_ALBUM  # アルバム名を追加
     }
     try:
         with open(progress_path, 'w', encoding='utf-8') as f:
@@ -481,7 +482,7 @@ class SDCardHandler(FileSystemEventHandler):
             except Exception as e:
                 logger.error(f"ボリュームチェック中のエラー: {e}")
 
-def check_periodically(interval=60, album_name=None, show_slideshow=False, fullscreen=True, recent=True, 
+def check_periodically(interval=10, album_name=None, show_slideshow=False, fullscreen=True, recent=True, 
                      current_only=False, slideshow_interval=5, random_order=False, no_pending=False, 
                      verbose=False, bgm_files=None):
     """
@@ -517,7 +518,7 @@ def main():
     """
     parser = argparse.ArgumentParser(description='SDカードから自動的に写真をアップロードする')
     parser.add_argument('--album', type=str, default=DEFAULT_ALBUM, help='アップロード先のアルバム名')
-    parser.add_argument('--watch', action='store_true', help='ファイルシステムの変更を監視する')
+    parser.add_argument('--watch', action='store_true', help='SDカードの挿入を監視する')
     parser.add_argument('--interval', type=int, default=60, help='ポーリング間隔（秒）')
     parser.add_argument('--slideshow', action='store_true', help='アップロードと同時にスライドショーを表示する')
     parser.add_argument('--no-fullscreen', action='store_true', help='スライドショーをフルスクリーンで表示しない')
@@ -544,7 +545,7 @@ def main():
     
     # 監視モードが有効な場合
     if args.watch:
-        logger.info("ファイルシステムの変更を監視しています...")
+        logger.info("SDカードの挿入を監視しています...")
         
         # macOSの場合は/Volumesディレクトリを監視
         if sys.platform == 'darwin':

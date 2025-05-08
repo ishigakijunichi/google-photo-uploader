@@ -90,7 +90,7 @@ pip install pywin32
 python src/auto_uploader.py --album "カメラアップロード"
 ```
 
-##### ファイルシステムの変更を監視（推奨）
+##### SD カードの挿入を監視（推奨）
 
 ```
 python src/auto_uploader.py --watch --album "カメラアップロード"

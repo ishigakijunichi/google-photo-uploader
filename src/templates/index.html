@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="ja">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Google Photos Uploader</title>
+        <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    </head>
+    <body>
+        <div class="container">
+            <h1>Google Photos Uploader</h1>
+            <div class="control-panel">
+                <div class="button-group">
+                    <button id="start_upload" class="btn primary">起動</button>
+                    <button id="stop_upload" class="btn danger">停止</button>
+                    <button id="unmount_sd" class="btn warning">SDカードを取り出す</button>
+                </div>
+                <div id="status" class="status"></div>
+                <div class="form-group">
+                    <label for="album_name">アップロード先アルバム:</label>
+                    <input type="text" id="album_name" value="Photo Uploader">
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="watch" checked>
+                        SDカードの挿入を監視
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label for="interval">チェック間隔（秒）:</label>
+                    <input
+                        type="number"
+                        id="interval"
+                        value="60"
+                        min="1"
+                        max="3600"
+                    >
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="slideshow" checked>
+                        スライドショーを表示
+                    </label>
+                </div>
+                <div class="section">
+                    <h3>スライドショー設定</h3>
+                    <div class="form-group">
+                        <label>
+                            <input
+                                type="radio"
+                                name="display_mode"
+                                value="all"
+                                id="all_photos"
+                            >
+                            全ての写真を表示
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input
+                                type="radio"
+                                name="display_mode"
+                                value="current"
+                                id="current_only"
+                                checked
+                            >
+                            アップロードする写真だけを表示
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label for="slideshow_interval">表示間隔（秒）</label>
+                        <input
+                            type="number"
+                            id="slideshow_interval"
+                            value="5"
+                            min="1"
+                            max="60"
+                        >
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="fullscreen" checked>
+                            フルスクリーン表示
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="random">
+                            ランダム順で表示
+                        </label>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="verbose" checked>
+                        詳細なログを出力
+                    </label>
+                </div>
+            </div>
+            <div class="log-container">
+                <h3>ログ</h3>
+                <div id="log" class="log"></div>
+            </div>
+        </div>
+        <script>
+        // ログを定期的に更新する関数
+        async function updateLog() {
+            try {
+                const response = await fetch('/get_log');
+                const data = await response.json();
+                const logElement = document.getElementById('log');
+                logElement.innerHTML = data.logs.map(log => `<div class="log-entry">${log}</div>`).join('');
+                logElement.scrollTop = logElement.scrollHeight; // 最新のログまで自動スクロール
+            } catch (error) {
+                console.error('ログの取得に失敗しました:', error);
+            }
+        }
+
+        // 5秒ごとにログを更新
+        setInterval(updateLog, 5000);
+        
+        document.getElementById('start_upload').addEventListener('click', async () => {
+            const data = {
+                album_name: document.getElementById('album_name').value,
+                watch: document.getElementById('watch').checked,
+                interval: parseInt(document.getElementById('interval').value),
+                slideshow: document.getElementById('slideshow').checked,
+                fullscreen: document.getElementById('fullscreen').checked,
+                all_photos: document.querySelector('input[name="display_mode"]:checked').value === 'all',
+                current_only: document.querySelector('input[name="display_mode"]:checked').value === 'current',
+                slideshow_interval: parseInt(document.getElementById('slideshow_interval').value),
+                random: document.getElementById('random').checked,
+                no_pending: document.querySelector('input[name="display_mode"]:checked').value === 'current',
+                verbose: document.getElementById('verbose').checked
+            };
+            
+            try {
+                const response = await fetch('/start_upload', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+                
+                const result = await response.json();
+                document.getElementById('status').textContent = result.message;
+            } catch (error) {
+                document.getElementById('status').textContent = 'エラーが発生しました: ' + error;
+            }
+        });
+        
+        document.getElementById('stop_upload').addEventListener('click', async () => {
+            try {
+                const response = await fetch('/stop_upload', {
+                    method: 'POST'
+                });
+                
+                const result = await response.json();
+                document.getElementById('status').textContent = result.message;
+            } catch (error) {
+                document.getElementById('status').textContent = 'エラーが発生しました: ' + error;
+            }
+        });
+
+        document.getElementById('unmount_sd').addEventListener('click', async () => {
+            try {
+                const response = await fetch('/unmount_sd', {
+                    method: 'POST'
+                });
+                
+                const result = await response.json();
+                document.getElementById('status').textContent = result.message;
+            } catch (error) {
+                document.getElementById('status').textContent = 'エラーが発生しました: ' + error;
+            }
+        });
+        </script>
+    </body>
+</html>
