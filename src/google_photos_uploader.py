@@ -12,6 +12,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+import sys
 
 # ロギングの設定
 logging.basicConfig(
@@ -31,79 +32,188 @@ SCOPES = [
 # Google Photos APIのエンドポイント
 API_BASE_URL = 'https://photoslibrary.googleapis.com/v1'
 
-def authenticate():
-    """Google APIに認証してcredentialsを返す"""
+# 認証情報のパス
+CREDENTIALS_DIR = Path.home() / '.google_photos_uploader'
+TOKEN_FILE = CREDENTIALS_DIR / 'token.json'
+CREDENTIALS_FILE = Path(__file__).parent / 'credentials.json'
+
+def get_credentials():
+    """Google API認証情報を取得"""
     creds = None
-    token_path = Path.home() / '.google_photos_uploader' / 'token.json'
     
-    # トークンファイルがあればそれを使用
-    if token_path.exists():
-        creds = Credentials.from_authorized_user_info(json.loads(token_path.read_text()), SCOPES)
+    # 既存のトークンファイルがあるか確認
+    if TOKEN_FILE.exists():
+        creds = Credentials.from_authorized_user_info(
+            json.loads(TOKEN_FILE.read_text()), SCOPES)
     
-    # 有効な認証情報がない場合は、ユーザーにログインを要求
+    # 有効な認証情報がない場合
     if not creds or not creds.valid:
+        # リフレッシュトークンがある場合は更新
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            credentials_path = Path.home() / '.google_photos_uploader' / 'credentials.json'
-            if not credentials_path.exists():
-                print(f"認証情報ファイルが見つかりません: {credentials_path}")
-                print("Google Cloud Consoleで認証情報を作成し、上記のパスに保存してください。")
-                return None
-            
-            flow = InstalledAppFlow.from_client_secrets_file(str(credentials_path), SCOPES)
+            try:
+                creds.refresh(Request())
+            except Exception as e:
+                logger.error(f"トークンの更新に失敗しました: {e}")
+                creds = None
+        
+        # リフレッシュに失敗または認証情報がない場合は新規認証
+        if not creds:
+            if not CREDENTIALS_FILE.exists():
+                logger.error(f"credentials.jsonファイルが見つかりません: {CREDENTIALS_FILE}")
+                sys.exit(1)
+                
+            flow = InstalledAppFlow.from_client_secrets_file(
+                CREDENTIALS_FILE, SCOPES)
             creds = flow.run_local_server(port=0)
         
-        # 認証情報を保存
-        token_path.parent.mkdir(parents=True, exist_ok=True)
-        token_path.write_text(json.dumps({
-            'token': creds.token,
-            'refresh_token': creds.refresh_token,
-            'token_uri': creds.token_uri,
-            'client_id': creds.client_id,
-            'client_secret': creds.client_secret,
-            'scopes': creds.scopes
-        }))
+        # トークンを保存
+        CREDENTIALS_DIR.mkdir(parents=True, exist_ok=True)
+        TOKEN_FILE.write_text(creds.to_json())
     
     return creds
 
-def upload_media(file_path, creds):
-    """メディアファイルをアップロードする"""
-    # ファイルのMIMEタイプを取得
-    mime_type, _ = mimetypes.guess_type(file_path)
-    if not mime_type:
-        mime_type = 'application/octet-stream'
+def upload_media(file_path, creds, token_only=False):
+    """
+    メディアファイルをアップロード
     
-    # アップロードURLを設定
-    upload_url = f"{API_BASE_URL}/uploads"
+    Args:
+        file_path: メディアファイルのパス
+        creds: 認証情報
+        token_only: Trueの場合、アップロードトークンのみを返す
     
-    # アップロードトークンを取得
-    headers = {
-        'Authorization': f'Bearer {creds.token}',
-        'Content-Type': 'application/octet-stream',
-        'X-Goog-Upload-Content-Type': mime_type,
-        'X-Goog-Upload-Protocol': 'raw'
-    }
+    Returns:
+        token_only=Falseの場合はアップロード成功の有無(bool)
+        token_only=Trueの場合はアップロードトークン(str)
+    """
+    file_path = Path(file_path)
+    
+    if not file_path.exists():
+        logger.error(f"ファイルが見つかりません: {file_path}")
+        return None if token_only else False
     
     try:
-        with open(file_path, 'rb') as file:
-            file_content = file.read()
-            response = requests.post(upload_url, headers=headers, data=file_content)
-            
-        if response.status_code != 200:
-            print(f"ファイルアップロード中にエラーが発生しました: {response.text}")
-            return None
-            
-        upload_token = response.content.decode('utf-8')
+        # ファイルのMIMEタイプを推定
+        mime_type = get_mime_type(file_path)
         
-        # メディアアイテムを作成
-        create_url = f"{API_BASE_URL}/mediaItems:batchCreate"
+        # アップロードリクエストのヘッダーを設定
+        headers = {
+            'Authorization': f'Bearer {creds.token}',
+            'Content-Type': 'application/octet-stream',
+            'X-Goog-Upload-Content-Type': mime_type,
+            'X-Goog-Upload-Protocol': 'raw',
+        }
+        
+        # ファイルをバイナリモードで開く
+        with open(file_path, 'rb') as f:
+            file_data = f.read()
+        
+        # アップロードリクエスト
+        logger.info(f"ファイルバイトをアップロード中: {file_path}")
+        response = requests.post(API_BASE_URL + '/uploads', headers=headers, data=file_data)
+        
+        if response.status_code == 200:
+            upload_token = response.text
+            logger.info(f"アップロードトークン取得: {upload_token[:10]}...")
+            
+            if token_only:
+                return upload_token
+            
+            # メディアアイテムの作成
+            return create_media_item(upload_token, file_path.name, creds)
+        else:
+            logger.error(f"アップロード失敗: {response.status_code} - {response.text}")
+            return None if token_only else False
+    
+    except Exception as e:
+        logger.error(f"アップロード中にエラーが発生: {e}")
+        return None if token_only else False
+
+def batch_create_media_items(tokens, album_name, creds):
+    """
+    複数のメディアアイテムをバッチで作成
+    
+    Args:
+        tokens: アップロードトークンのリスト
+        album_name: アルバム名 (オプション)
+        creds: 認証情報
+    
+    Returns:
+        dict: 成功と失敗したトークンのリスト
+    """
+    if not tokens:
+        logger.error("アップロードトークンが指定されていません")
+        return {"success": [], "failed": []}
+    
+    try:
+        # リクエストヘッダーを設定
         headers = {
             'Authorization': f'Bearer {creds.token}',
             'Content-Type': 'application/json'
         }
         
-        data = {
+        # リクエスト本文を作成
+        request_body = {
+            'newMediaItems': []
+        }
+        
+        # 各トークンについてnewMediaItemを追加
+        for token in tokens:
+            request_body['newMediaItems'].append({
+                'simpleMediaItem': {
+                    'uploadToken': token
+                }
+            })
+        
+        # アルバムIDを指定（アルバム名がある場合）
+        if album_name:
+            album_id = get_or_create_album(album_name, creds)
+            if album_id:
+                request_body['albumId'] = album_id
+        
+        # バッチ作成リクエストを送信
+        logger.info(f"{len(tokens)}個のメディアアイテムをバッチ作成中")
+        response = requests.post(API_BASE_URL + '/mediaItems:batchCreate', headers=headers, json=request_body)
+        
+        if response.status_code == 200:
+            response_data = response.json()
+            
+            # 結果をパース
+            success_tokens = []
+            failed_tokens = []
+            
+            for result, token in zip(response_data.get('newMediaItemResults', []), tokens):
+                status = result.get('status', {})
+                # 成功時は code == 0 または status フィールド自体が省略されるケースがある
+                if status.get('code', 0) == 0:
+                    success_tokens.append(token)
+                else:
+                    logger.warning(f"アイテム作成失敗: {status.get('message')}")
+                    failed_tokens.append(token)
+            
+            logger.info(f"バッチ作成完了: 成功={len(success_tokens)}, 失敗={len(failed_tokens)}")
+            return {
+                "success": success_tokens,
+                "failed": failed_tokens
+            }
+        else:
+            logger.error(f"バッチ作成リクエスト失敗: {response.status_code} - {response.text}")
+            return {"success": [], "failed": tokens}
+    
+    except Exception as e:
+        logger.error(f"バッチ作成中にエラーが発生: {e}")
+        return {"success": [], "failed": tokens}
+
+def create_media_item(upload_token, file_name, creds, album_name=None):
+    """メディアアイテムを作成"""
+    try:
+        # リクエストヘッダーを設定
+        headers = {
+            'Authorization': f'Bearer {creds.token}',
+            'Content-Type': 'application/json'
+        }
+        
+        # リクエスト本文を作成
+        request_body = {
             'newMediaItems': [
                 {
                     'simpleMediaItem': {
@@ -113,85 +223,165 @@ def upload_media(file_path, creds):
             ]
         }
         
-        response = requests.post(create_url, headers=headers, data=json.dumps(data))
+        # アルバムIDを指定（アルバム名がある場合）
+        if album_name:
+            album_id = get_or_create_album(album_name, creds)
+            if album_id:
+                request_body['albumId'] = album_id
         
-        if response.status_code != 200:
-            print(f"メディアアイテム作成中にエラーが発生しました: {response.text}")
-            return None
-            
-        response_data = response.json()
-        return response_data.get('newMediaItemResults')[0].get('mediaItem').get('id')
+        # メディアアイテム作成リクエストを送信
+        logger.info(f"メディアアイテムを作成中: {file_name}")
+        response = requests.post(API_BASE_URL + '/mediaItems:batchCreate', headers=headers, json=request_body)
+        
+        if response.status_code == 200:
+            logger.info(f"メディアアイテム作成成功: {file_name}")
+            return True
+        else:
+            logger.error(f"メディアアイテム作成失敗: {response.status_code} - {response.text}")
+            return False
     
     except Exception as e:
-        print(f"エラーが発生しました: {e}")
-        return None
+        logger.error(f"メディアアイテム作成中にエラーが発生: {e}")
+        return False
 
-def get_albums(creds):
-    """アルバムのリストを取得する"""
-    url = f"{API_BASE_URL}/albums"
+def get_albums(creds, include_non_app_created=True, page_size=50):
+    """ユーザーのアルバム一覧を取得
+    
+    Args:
+        creds: 認証情報
+        include_non_app_created (bool): Trueの場合、Google フォト UI などで作成されたアルバムも含める
+        page_size (int): 1ページあたりの取得件数（最大100）
+    Returns:
+        list: アルバム情報のリスト
+    """
     headers = {
         'Authorization': f'Bearer {creds.token}',
         'Content-Type': 'application/json'
     }
     
-    response = requests.get(url, headers=headers)
-    if response.status_code != 200:
-        print(f"アルバムリスト取得中にエラーが発生しました: {response.text}")
-        return []
+    albums = []
+    page_token = None
+    
+    # excludeNonAppCreatedData=false を明示することで、アプリ外で作成されたアルバムも取得可能
+    exclude_param = 'false' if include_non_app_created else 'true'
+    
+    while True:
+        params = {
+            'pageSize': str(page_size),
+            'excludeNonAppCreatedData': exclude_param
+        }
+        if page_token:
+            params['pageToken'] = page_token
         
-    return response.json().get('albums', [])
+        response = requests.get(API_BASE_URL + '/albums', headers=headers, params=params)
+        if response.status_code != 200:
+            logger.error(f"アルバム一覧取得失敗: {response.status_code} - {response.text}")
+            break
+        
+        data = response.json()
+        albums.extend(data.get('albums', []))
+        page_token = data.get('nextPageToken')
+        if not page_token:
+            break
+    
+    logger.debug(f"取得したアルバム数: {len(albums)}")
+    return albums
 
 def create_album(album_name, creds):
-    """新しいアルバムを作成する"""
-    url = f"{API_BASE_URL}/albums"
+    """指定名のアルバムを新規作成しIDを返す"""
     headers = {
         'Authorization': f'Bearer {creds.token}',
         'Content-Type': 'application/json'
     }
-    
-    data = {
-        'album': {'title': album_name}
-    }
-    
-    response = requests.post(url, headers=headers, data=json.dumps(data))
-    if response.status_code != 200:
-        print(f"アルバム作成中にエラーが発生しました: {response.text}")
+    response = requests.post(
+        API_BASE_URL + '/albums',
+        headers=headers,
+        json={'album': {'title': album_name}}
+    )
+    if response.status_code == 200:
+        album_id = response.json().get('id')
+        logger.info(f"新しいアルバムを作成: {album_name}")
+        return album_id
+    else:
+        logger.error(f"アルバム作成失敗: {response.status_code} - {response.text}")
         return None
-        
-    return response.json().get('id')
 
-def add_to_album(album_id, media_id, creds):
-    """メディアをアルバムに追加する"""
-    url = f"{API_BASE_URL}/albums/{album_id}:batchAddMediaItems"
+def add_to_album(album_id, media_ids, creds):
+    """既存メディアをアルバムに追加
+    Args:
+        album_id (str): 追加先のアルバムID
+        media_ids (list): 追加するメディアIDのリスト
+        creds: 認証情報
+    Returns:
+        bool: 成功したかどうか
+    """
+    if not media_ids:
+        return True
     headers = {
         'Authorization': f'Bearer {creds.token}',
         'Content-Type': 'application/json'
     }
+    response = requests.post(
+        f"{API_BASE_URL}/albums/{album_id}:batchAddMediaItems",
+        headers=headers,
+        json={'mediaItemIds': media_ids}
+    )
+    if response.status_code == 200:
+        return True
+    else:
+        logger.error(f"アルバムへの追加失敗: {response.status_code} - {response.text}")
+        return False
+
+def get_or_create_album(album_name, creds):
+    """アルバムIDを取得または新規作成
+    Google フォト UI 等で事前に作られているアルバムも検索対象に含める
+    """
+    albums = get_albums(creds, include_non_app_created=True)
+    for album in albums:
+        if album.get('title') == album_name:
+            logger.info(f"既存のアルバムを使用: {album_name}")
+            return album.get('id')
     
-    data = {
-        'mediaItemIds': [media_id]
-    }
+    # 見つからなければ新規作成
+    logger.info(f"新しいアルバムを作成: {album_name}")
+    return create_album(album_name, creds)
+
+def get_mime_type(file_path):
+    """ファイルのMIMEタイプを取得"""
+    # MIMEタイプを初期化
+    mimetypes.init()
     
-    response = requests.post(url, headers=headers, data=json.dumps(data))
+    # ファイル拡張子からMIMEタイプを推測
+    mime_type, _ = mimetypes.guess_type(file_path)
     
-    # 詳細なレスポンスを記録
-    if response.status_code != 200:
-        logger.error(f"アルバムへの追加中にエラー発生 (HTTP {response.status_code}): {response.text}")
-        # レート制限に関する情報があれば記録
-        if 'X-RateLimit-Limit' in response.headers:
-            logger.error(f"レート制限情報: Limit={response.headers.get('X-RateLimit-Limit')}, "
-                        f"Remaining={response.headers.get('X-RateLimit-Remaining')}, "
-                        f"Reset={response.headers.get('X-RateLimit-Reset')}")
+    # 推測できない場合はデフォルト値を使用
+    if mime_type is None:
+        if file_path.suffix.lower() in ['.jpg', '.jpeg']:
+            mime_type = 'image/jpeg'
+        elif file_path.suffix.lower() == '.png':
+            mime_type = 'image/png'
+        elif file_path.suffix.lower() in ['.mp4', '.mov']:
+            mime_type = 'video/mp4'
+        else:
+            mime_type = 'application/octet-stream'
     
-    return response.status_code == 200
+    return mime_type
 
 def main():
     """メイン関数"""
     parser = argparse.ArgumentParser(description='Google Photosにファイルをアップロードする')
-    parser.add_argument('files', metavar='FILE', type=str, nargs='+',
+    parser.add_argument('files', metavar='FILE', type=str, nargs='*',
                         help='アップロードするファイルのパス')
     parser.add_argument('--album', type=str, help='アップロード先のアルバム名（オプション）')
     parser.add_argument('--verbose', action='store_true', help='詳細なログを出力する')
+    
+    # 新しい機能: トークンのみ取得モード
+    parser.add_argument('--token-only', action='store_true', help='アップロードトークンのみを返す')
+    
+    # 新しい機能: バッチ作成モード
+    parser.add_argument('--batch-create', action='store_true', help='バッチでメディアアイテムを作成する')
+    parser.add_argument('--tokens-file', type=str, help='アップロードトークンのJSONファイル')
+    
     args = parser.parse_args()
     
     # 詳細ログモードが指定された場合
@@ -199,57 +389,109 @@ def main():
         logger.setLevel(logging.DEBUG)
         logger.debug("詳細ログモードが有効です")
     
-    # 認証
-    creds = authenticate()
-    if not creds:
-        return
-    
-    # アルバムIDを取得（指定された場合）
-    album_id = None
-    if args.album:
-        try:
-            albums = get_albums(creds)
-            for album in albums:
-                if album.get('title') == args.album:
-                    album_id = album.get('id')
-                    break
-            
-            if not album_id:
-                logger.info(f"アルバム '{args.album}' が見つかりません。新しく作成します。")
-                album_id = create_album(args.album, creds)
-                if album_id:
-                    logger.debug(f"新しいアルバムが作成されました: ID={album_id}")
-                else:
-                    logger.error("アルバムの作成に失敗しました")
-        except Exception as error:
-            logger.error(f"アルバム操作中にエラーが発生しました: {error}")
-            return
-    
-    # ファイルをアップロード
-    for file_path in args.files:
-        if not os.path.exists(file_path):
-            logger.warning(f"ファイルが見つかりません: {file_path}")
-            continue
+    try:
+        # 認証情報を取得
+        creds = get_credentials()
         
-        logger.info(f"アップロード中: {file_path}")
-        
-        # ファイル情報をログに記録
-        if args.verbose:
-            file_size = os.path.getsize(file_path) / (1024 * 1024)  # MBに変換
-            logger.debug(f"ファイル情報: サイズ={file_size:.2f}MB, パス={file_path}")
-        
-        media_id = upload_media(file_path, creds)
-        
-        if media_id and album_id:
-            logger.debug(f"メディアID: {media_id}, アルバムID: {album_id}")
-            if add_to_album(album_id, media_id, creds):
-                logger.info(f"ファイル '{file_path}' をアルバム '{args.album}' にアップロードしました")
+        # トークンのみ取得モード
+        if args.token_only:
+            if len(args.files) != 1:
+                logger.error("--token-only モードでは、ちょうど 1 つの FILE を指定してください")
+                sys.exit(1)
+            # 単一ファイルのトークンを取得して出力
+            token = upload_media(args.files[0], creds, token_only=True)
+            if token:
+                print(token)  # 標準出力にトークンを出力
+                sys.exit(0)
             else:
-                logger.warning(f"ファイル '{file_path}' をアップロードしましたが、アルバムへの追加に失敗しました")
-        elif media_id:
-            logger.info(f"ファイル '{file_path}' をアップロードしました")
+                sys.exit(1)
+        
+        # バッチ作成モード
+        elif args.batch_create and args.tokens_file:
+            # トークンファイルを読み込み
+            with open(args.tokens_file, 'r') as f:
+                tokens = json.load(f)
+            
+            # バッチ作成を実行
+            result = batch_create_media_items(tokens, args.album, creds)
+            
+            # 結果をJSON形式で標準出力に出力
+            print(json.dumps(result))
+            
+            # 成功したトークンがあれば成功とする
+            if result["success"]:
+                sys.exit(0)
+            else:
+                sys.exit(1)
+        
+        # 通常のアップロードモード
         else:
-            logger.error(f"ファイル '{file_path}' のアップロードに失敗しました")
+            # ファイルが指定されていない場合は終了
+            if not args.files:
+                logger.error("アップロードするファイルを指定してください")
+                sys.exit(1)
+                
+            # アルバムIDを取得（指定された場合）
+            album_id = None
+            if args.album:
+                try:
+                    albums = get_albums(creds)
+                    for album in albums:
+                        if album.get('title') == args.album:
+                            album_id = album.get('id')
+                            break
+                
+                    if not album_id:
+                        logger.info(f"アルバム '{args.album}' が見つかりません。新しく作成します。")
+                        album_id = create_album(args.album, creds)
+                        if album_id:
+                            logger.debug(f"新しいアルバムが作成されました: ID={album_id}")
+                        else:
+                            logger.error("アルバムの作成に失敗しました")
+                except Exception as error:
+                    logger.error(f"アルバム操作中にエラーが発生しました: {error}")
+                    return
+            
+            # ファイルをアップロード
+            success_count = 0
+            for file_path in args.files:
+                if not os.path.exists(file_path):
+                    logger.warning(f"ファイルが見つかりません: {file_path}")
+                    continue
+                
+                logger.info(f"アップロード中: {file_path}")
+                
+                # ファイル情報をログに記録
+                if args.verbose:
+                    file_size = os.path.getsize(file_path) / (1024 * 1024)  # MBに変換
+                    logger.debug(f"ファイル情報: サイズ={file_size:.2f}MB, パス={file_path}")
+                
+                media_id = upload_media(file_path, creds, token_only=False)
+                
+                if media_id and album_id:
+                    logger.debug(f"メディアID: {media_id}, アルバムID: {album_id}")
+                    if add_to_album(album_id, [media_id], creds):
+                        logger.info(f"ファイル '{file_path}' をアルバム '{args.album}' にアップロードしました")
+                        success_count += 1
+                    else:
+                        logger.warning(f"ファイル '{file_path}' をアップロードしましたが、アルバムへの追加に失敗しました")
+                elif media_id:
+                    logger.info(f"ファイル '{file_path}' をアップロードしました")
+                    success_count += 1
+                else:
+                    logger.error(f"ファイル '{file_path}' のアップロードに失敗しました")
+            
+            logger.info(f"アップロード完了: 成功={success_count}/{len(args.files)}")
+            
+            # すべて成功したかどうかで終了コードを設定
+            if success_count == len(args.files):
+                sys.exit(0)
+            else:
+                sys.exit(1)
+    
+    except Exception as e:
+        logger.error(f"予期せぬエラーが発生しました: {e}")
+        sys.exit(1)
 
 if __name__ == '__main__':
     main()

@@ -12,6 +12,8 @@ from pathlib import Path
 import re
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+import concurrent.futures
+import threading
 
 # ロギングの設定
 logging.basicConfig(
@@ -35,6 +37,8 @@ SUPPORTED_EXTENSIONS = [
 MAX_RETRIES = 3  # 失敗した場合の最大再試行回数
 RETRY_DELAY = 5  # 再試行までの待機時間（秒）
 DEFAULT_ALBUM = "Photo Uploader"  # デフォルトのアルバム名
+MAX_WORKERS = 5  # 並列アップロードの最大ワーカー数
+MAX_BATCH_SIZE = 50  # 一度に作成できるメディアアイテムの最大数
 
 def find_sd_card():
     """
@@ -69,8 +73,116 @@ def find_sd_card():
                 
     return None
 
+def upload_single_file(file_path, album_name=None, verbose=False):
+    """
+    単一ファイルをアップロードしてアップロードトークンを取得
+    
+    Args:
+        file_path (str): アップロードするファイルのパス
+        album_name (str): アップロード先のアルバム名（オプション）
+        verbose (bool): 詳細なログを出力するかどうか
+        
+    Returns:
+        str or None: 成功した場合はアップロードトークン、失敗した場合はNone
+    """
+    uploader_script = Path(__file__).parent / "google_photos_uploader.py"
+    
+    # アップロードコマンドを構築（トークン取得モード）
+    command = [sys.executable, str(uploader_script), "--token-only"]
+    if verbose:
+        command.append("--verbose")
+    
+    # ファイルパスを追加
+    command.append(file_path)
+    
+    try:
+        logger.info(f"アップロード開始: {file_path}")
+        if verbose:
+            logger.debug(f"実行コマンド: {' '.join(command)}")
+        
+        # 標準出力と標準エラー出力の両方をキャプチャ
+        result = subprocess.run(command, check=True, capture_output=True, text=True)
+        
+        # 出力からトークンを取得
+        token = result.stdout.strip()
+        if token:
+            logger.info(f"ファイルアップロード成功: {file_path}")
+            return token
+        else:
+            logger.error(f"トークンの取得に失敗: {file_path}")
+            return None
+    except subprocess.CalledProcessError as e:
+        logger.error(f"ファイルアップロード中にエラーが発生: {file_path}")
+        logger.error(f"終了コード: {e.returncode}")
+        logger.error(f"標準出力: {e.stdout}")
+        logger.error(f"標準エラー出力: {e.stderr}")
+        return None
+    except Exception as e:
+        logger.error(f"予期せぬエラーが発生: {str(e)}")
+        return None
+
+def batch_create_media_items(upload_tokens, album_name=None, verbose=False):
+    """
+    複数のアップロードトークンを使用してメディアアイテムをバッチ作成
+    
+    Args:
+        upload_tokens (list): アップロードトークンのリスト
+        album_name (str): アップロード先のアルバム名（オプション）
+        verbose (bool): 詳細なログを出力するかどうか
+        
+    Returns:
+        bool: 成功した場合はTrue
+    """
+    uploader_script = Path(__file__).parent / "google_photos_uploader.py"
+    
+    # バッチ作成コマンドを構築
+    command = [sys.executable, str(uploader_script), "--batch-create"]
+    if album_name:
+        command.extend(["--album", album_name])
+    if verbose:
+        command.append("--verbose")
+    
+    # トークンをJSON形式でファイルに保存
+    tokens_file = Path.home() / '.google_photos_uploader' / 'temp_tokens.json'
+    try:
+        with open(tokens_file, 'w', encoding='utf-8') as f:
+            json.dump(upload_tokens, f)
+        
+        # トークンファイルを指定
+        command.extend(["--tokens-file", str(tokens_file)])
+        
+        logger.info(f"メディアアイテムのバッチ作成開始: {len(upload_tokens)}個")
+        if verbose:
+            logger.debug(f"実行コマンド: {' '.join(command)}")
+        
+        # 実行
+        result = subprocess.run(command, check=True, capture_output=True, text=True)
+        
+        # 成功したトークンを解析
+        try:
+            success_data = json.loads(result.stdout)
+            logger.info(f"バッチ作成成功: {len(success_data.get('success', []))}個, 失敗: {len(success_data.get('failed', []))}個")
+            return success_data
+        except json.JSONDecodeError:
+            logger.warning("バッチ作成結果の解析に失敗しました")
+            return {"success": [], "failed": upload_tokens}
+    
+    except subprocess.CalledProcessError as e:
+        logger.error(f"バッチ作成中にエラーが発生")
+        logger.error(f"終了コード: {e.returncode}")
+        logger.error(f"標準出力: {e.stdout}")
+        logger.error(f"標準エラー出力: {e.stderr}")
+        return {"success": [], "failed": upload_tokens}
+    except Exception as e:
+        logger.error(f"予期せぬエラーが発生: {str(e)}")
+        return {"success": [], "failed": upload_tokens}
+    finally:
+        # 一時ファイルを削除
+        if tokens_file.exists():
+            tokens_file.unlink()
+
 def upload_photos(dcim_path, album_name=None, show_slideshow=False, fullscreen=True, recent=True, current_only=False,
-                 interval=5, random_order=False, no_pending=False, verbose=False, bgm_files=None):
+                 interval=5, random_order=False, no_pending=False, verbose=False, bgm_files=None, all_photos=False):
     """
     指定されたDCIMパス内の写真と動画をGoogle Photosにアップロード
     
@@ -86,12 +198,11 @@ def upload_photos(dcim_path, album_name=None, show_slideshow=False, fullscreen=T
         no_pending (bool): アップロード予定/失敗ファイルを含めないかどうか
         verbose (bool): 詳細なログを出力するかどうか
         bgm_files (list): BGMとして再生する音楽ファイルまたはディレクトリのリスト
+        all_photos (bool): すべての写真をスライドショーに表示するかどうか
         
     Returns:
         bool: 成功した場合はTrue
     """
-    uploader_script = Path(__file__).parent / "google_photos_uploader.py"
-    
     # DCIMパス内のすべてのフォルダを探索
     photo_files = []
     for ext in SUPPORTED_EXTENSIONS:
@@ -157,6 +268,7 @@ def upload_photos(dcim_path, album_name=None, show_slideshow=False, fullscreen=T
     
     # アップロード進捗を記録するファイルを準備
     progress_path = Path.home() / '.google_photos_uploader' / 'upload_progress.json'
+    progress_lock = threading.Lock()  # 進捗データ更新用のロック
     progress_data = {
         'total': len(all_files),
         'success': 0,
@@ -175,74 +287,143 @@ def upload_photos(dcim_path, album_name=None, show_slideshow=False, fullscreen=T
     # アップロード開始前にスライドショーを表示（アップロードと同時に表示）
     if show_slideshow:
         logger.info("アップロードと同時にスライドショーを開始します")
-        show_uploaded_slideshow(fullscreen=fullscreen, recent=recent, current_only=current_only,
+        show_uploaded_slideshow(fullscreen=fullscreen, recent=not all_photos, current_only=current_only,
                               interval=interval, random_order=random_order, no_pending=no_pending,
                               verbose=verbose, bgm_files=bgm_files)
     
-    # 成功したファイルと失敗したファイルを記録
+    # ステップ1: 並列ファイルアップロード
+    # アップロード結果を保存するディクショナリ
+    upload_results = []
     success_files = []
-    current_failed_files = {}
+    failed_files_dict = {}
     
-    # ファイルを1つずつアップロード
-    for idx, file_path in enumerate(all_files, start=1):
-        # アップロードコマンドを構築
-        command = [sys.executable, str(uploader_script)]
-        if album_name:
-            command.extend(["--album", album_name])
-        
-        # 詳細なログ出力のためのフラグを追加
-        command.append("--verbose")
-        
-        # 1ファイルずつアップロード
-        command.append(file_path)
-        
-        # アップロード実行
+    # 進捗更新関数
+    def update_progress(success_count, failed_count, current_count):
+        with progress_lock:
+            progress_data['success'] = success_count
+            progress_data['failed'] = failed_count
+            progress_data['current'] = current_count
+            try:
+                with open(progress_path, 'w', encoding='utf-8') as f:
+                    json.dump(progress_data, f, ensure_ascii=False)
+            except Exception as e:
+                logger.debug(f"進捗ファイルの更新に失敗しました: {e}")
+    
+    # 並列アップロード関数
+    def parallel_upload_task(file_path, idx):
         retry_count = failed_files.get(file_path, {}).get('retry_count', 0) if file_path in failed_files else 0
         
         try:
-            logger.info(f"アップロード開始: {file_path}")
-            logger.debug(f"実行コマンド: {' '.join(command)}")
+            # ファイルバイトをアップロードしてトークンを取得
+            token = upload_single_file(file_path, album_name, verbose)
             
-            # 標準出力と標準エラー出力の両方をキャプチャ
-            result = subprocess.run(command, check=True, capture_output=True, text=True)
+            if token:
+                return {
+                    'file': file_path,
+                    'token': token,
+                    'success': True,
+                    'idx': idx
+                }
+            else:
+                # 失敗情報を記録
+                failed_info = {
+                    'file': file_path,
+                    'retry_count': retry_count + 1,
+                    'success': False,
+                    'last_error': 'トークン取得に失敗',
+                    'last_attempt': time.strftime('%Y-%m-%d %H:%M:%S'),
+                    'idx': idx
+                }
+                return failed_info
+        except Exception as e:
+            # 例外が発生した場合の失敗情報
+            failed_info = {
+                'file': file_path,
+                'retry_count': retry_count + 1,
+                'success': False,
+                'last_error': str(e),
+                'last_attempt': time.strftime('%Y-%m-%d %H:%M:%S'),
+                'idx': idx
+            }
+            return failed_info
+    
+    # 効率的なワーカー数を決定（CPUコア数と設定値の小さい方）
+    workers = min(MAX_WORKERS, os.cpu_count() or 4)
+    logger.info(f"並列アップロードを開始します（ワーカー数: {workers}）")
+    
+    # ファイルアップロードを並列実行
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+        # すべてのファイルについてアップロードタスクを送信
+        future_to_file = {executor.submit(parallel_upload_task, file, idx): (file, idx) 
+                         for idx, file in enumerate(all_files, start=1)}
+        
+        # 完了したタスクを処理
+        for future in concurrent.futures.as_completed(future_to_file):
+            file, idx = future_to_file[future]
+            try:
+                result = future.result()
+                upload_results.append(result)
+                
+                # 進捗を更新
+                success_count = len([r for r in upload_results if r.get('success', False)])
+                failed_count = len(upload_results) - success_count
+                update_progress(success_count, failed_count, len(upload_results))
+                
+                if result.get('success', False):
+                    logger.info(f"ファイルアップロード成功 ({len(upload_results)}/{len(all_files)}): {file}")
+                else:
+                    logger.warning(f"ファイルアップロード失敗 ({len(upload_results)}/{len(all_files)}): {file}")
+                    failed_files_dict[file] = {
+                        'retry_count': result.get('retry_count', 1),
+                        'last_error': result.get('last_error', '不明なエラー'),
+                        'last_attempt': result.get('last_attempt', time.strftime('%Y-%m-%d %H:%M:%S'))
+                    }
+            except Exception as e:
+                logger.error(f"タスク処理中にエラーが発生: {e}")
+                upload_results.append({
+                    'file': file,
+                    'success': False,
+                    'last_error': str(e),
+                    'idx': idx
+                })
+    
+    # 成功したファイルとトークンを抽出
+    successful_uploads = [r for r in upload_results if r.get('success', False)]
+    
+    # ステップ2: バッチでメディアアイテムを作成
+    if successful_uploads:
+        logger.info(f"{len(successful_uploads)}個のファイルが正常にアップロードされました。メディアアイテム作成を開始します。")
+        
+        # バッチサイズごとに処理
+        for i in range(0, len(successful_uploads), MAX_BATCH_SIZE):
+            batch = successful_uploads[i:i + MAX_BATCH_SIZE]
+            tokens = [item['token'] for item in batch]
+            files = [item['file'] for item in batch]
             
-            # 成功したファイルを記録
-            success_files.append(file_path)
-            logger.info(f"アップロード成功: {file_path}")
+            logger.info(f"バッチ作成開始: {i+1}〜{i+len(batch)}/{len(successful_uploads)}")
+            
+            # バッチ作成実行
+            batch_result = batch_create_media_items(tokens, album_name, verbose)
+            
+            # 成功したファイルと失敗したファイルを処理
+            success_indices = batch_result.get('success', [])
+            failed_indices = batch_result.get('failed', [])
+            
+            # 成功したファイルをリストに追加
+            for idx, token in enumerate(tokens):
+                if token in success_indices:
+                    success_files.append(files[idx])
+                else:
+                    failed_files_dict[files[idx]] = {
+                        'retry_count': failed_files.get(files[idx], {}).get('retry_count', 0) + 1,
+                        'last_error': 'バッチ作成に失敗',
+                        'last_attempt': time.strftime('%Y-%m-%d %H:%M:%S')
+                    }
             
             # 進捗を更新
-            progress_data['success'] = len(success_files)
-            progress_data['current'] = idx
-            try:
-                with open(progress_path, 'w', encoding='utf-8') as f:
-                    json.dump(progress_data, f, ensure_ascii=False)
-            except Exception as e:
-                logger.debug(f"進捗ファイルの更新に失敗しました: {e}")
-            
-        except subprocess.CalledProcessError as e:
-            logger.error(f"アップロード中にエラーが発生しました: {file_path}")
-            logger.error(f"終了コード: {e.returncode}")
-            logger.error(f"標準出力: {e.stdout}")
-            logger.error(f"標準エラー出力: {e.stderr}")
-            
-            # 再試行回数を増やして記録
-            current_failed_files[file_path] = {
-                'retry_count': retry_count + 1,
-                'last_error': str(e),
-                'last_attempt': time.strftime('%Y-%m-%d %H:%M:%S')
-            }
-            
-            # 進捗を更新 (失敗した場合もカウント)
-            progress_data['failed'] = len(current_failed_files)
-            progress_data['current'] = idx
-            try:
-                with open(progress_path, 'w', encoding='utf-8') as f:
-                    json.dump(progress_data, f, ensure_ascii=False)
-            except Exception as e:
-                logger.debug(f"進捗ファイルの更新に失敗しました: {e}")
-        
-        # 各ファイル間に少し遅延を入れてAPIレート制限を回避
-        time.sleep(1)
+            update_progress(len(success_files), len(failed_files_dict), len(upload_results))
+    else:
+        logger.warning("成功したファイルアップロードがありません。メディアアイテム作成はスキップします。")
     
     # 成功したファイルをアップロード済みリストに追加
     with open(uploaded_log, 'a', encoding='utf-8') as f:
@@ -251,7 +432,7 @@ def upload_photos(dcim_path, album_name=None, show_slideshow=False, fullscreen=T
     
     # 今回失敗したファイルを失敗リストに追加/更新
     # 既存の失敗リストと今回の失敗リストをマージ
-    updated_failed_files = {**failed_files, **current_failed_files}
+    updated_failed_files = {**failed_files, **failed_files_dict}
     
     # 成功したファイルは失敗リストから削除
     for file in success_files:
@@ -262,15 +443,18 @@ def upload_photos(dcim_path, album_name=None, show_slideshow=False, fullscreen=T
     with open(failed_log, 'w', encoding='utf-8') as f:
         json.dump(updated_failed_files, f, ensure_ascii=False, indent=2)
     
-    logger.info(f"アップロード完了: 成功={len(success_files)}枚, 失敗={len(current_failed_files)}枚")
+    logger.info(f"アップロード完了: 成功={len(success_files)}枚, 失敗={len(failed_files_dict)}枚")
     
     # 進捗ファイルを完了状態に更新
     progress_data['completed'] = True
     try:
         with open(progress_path, 'w', encoding='utf-8') as f:
             json.dump(progress_data, f, ensure_ascii=False)
+        
+        # アップロード完了後の進捗ファイルは保持し、Web UI の停止操作で削除します
+        logger.info("アップロード完了: 進捗ファイルを保持しました (Web 停止ボタンで削除されます)")
     except Exception as e:
-        logger.debug(f"進捗ファイルの完了更新に失敗しました: {e}")
+        logger.debug(f"進捗ファイルの更新に失敗しました: {e}")
     
     return len(success_files) > 0
 
@@ -397,7 +581,6 @@ class SDCardHandler(FileSystemEventHandler):
             self.pending_mount_check = True
             
             # 遅延実行の設定
-            import threading
             threading.Timer(self.mount_check_delay, self._delayed_volume_check).start()
             return
             
@@ -432,11 +615,19 @@ class SDCardHandler(FileSystemEventHandler):
             
         if sd_path and (sd_path / DCIM_PATH).exists():
             logger.info(f"SDカード検出: {sd_path}")
-            upload_photos(sd_path / DCIM_PATH, self.album_name, self.show_slideshow, 
+            success = upload_photos(sd_path / DCIM_PATH, self.album_name, self.show_slideshow, 
                          self.fullscreen, self.recent, self.current_only,
                          self.interval, self.random_order, self.no_pending, 
                          self.verbose, self.bgm_files)
             self.last_processed = current_time
+            
+            # アップロードが成功しない場合でもスライドショーだけ表示
+            if not success and self.show_slideshow:
+                logger.info("アップロードする写真はありませんでしたが、スライドショーを表示します")
+                show_uploaded_slideshow(fullscreen=self.fullscreen, recent=self.recent, 
+                                     current_only=self.current_only, interval=self.interval,
+                                     random_order=self.random_order, no_pending=self.no_pending,
+                                     verbose=self.verbose, bgm_files=self.bgm_files)
     
     def _delayed_volume_check(self):
         """
@@ -471,7 +662,7 @@ class SDCardHandler(FileSystemEventHandler):
                             # アップロードが成功しない場合でもスライドショーだけ表示
                             if not success and self.show_slideshow:
                                 logger.info("アップロードする写真はありませんでしたが、スライドショーを表示します")
-                                show_uploaded_slideshow(fullscreen=self.fullscreen, recent=self.recent, 
+                                show_uploaded_slideshow(fullscreen=self.fullscreen, recent=not (not self.recent), 
                                                      current_only=self.current_only, interval=self.interval,
                                                      random_order=self.random_order, no_pending=self.no_pending,
                                                      verbose=self.verbose, bgm_files=self.bgm_files)
@@ -505,8 +696,16 @@ def check_periodically(interval=10, album_name=None, show_slideshow=False, fulls
         sd_path = find_sd_card()
         if sd_path and (sd_path / DCIM_PATH).exists():
             logger.info(f"SDカード検出: {sd_path}")
-            upload_photos(sd_path / DCIM_PATH, album_name, show_slideshow, fullscreen, recent, current_only,
+            success = upload_photos(sd_path / DCIM_PATH, album_name, show_slideshow, fullscreen, recent, current_only,
                         slideshow_interval, random_order, no_pending, verbose, bgm_files)
+            
+            # アップロードが成功しない場合でもスライドショーだけ表示
+            if not success and show_slideshow:
+                logger.info("アップロードする写真はありませんでしたが、スライドショーを表示します")
+                show_uploaded_slideshow(fullscreen=fullscreen, recent=recent, 
+                                     current_only=current_only, interval=slideshow_interval,
+                                     random_order=random_order, no_pending=no_pending,
+                                     verbose=verbose, bgm_files=bgm_files)
         else:
             logger.info("SDカードが見つかりません")
         
@@ -540,8 +739,15 @@ def main():
     sd_path = find_sd_card()
     if sd_path and (sd_path / DCIM_PATH).exists():
         logger.info(f"SDカード検出: {sd_path}")
-        upload_photos(sd_path / DCIM_PATH, args.album, args.slideshow, fullscreen, recent, args.current_only,
-                    args.slideshow_interval, args.random, args.no_pending, args.verbose, args.bgm)
+        success = upload_photos(sd_path / DCIM_PATH, args.album, args.slideshow, fullscreen, recent, args.current_only,
+                    args.slideshow_interval, args.random, args.no_pending, args.verbose, args.bgm, args.all_photos)
+        
+        # アップロードが成功しない場合でも、スライドショーが指定されていれば表示する
+        if not success and args.slideshow:
+            logger.info("アップロードする写真はありませんでしたが、スライドショーを表示します")
+            show_uploaded_slideshow(fullscreen=fullscreen, recent=not args.all_photos, current_only=args.current_only,
+                                 interval=args.slideshow_interval, random_order=args.random, 
+                                 no_pending=args.no_pending, verbose=args.verbose, bgm_files=args.bgm)
     
     # 監視モードが有効な場合
     if args.watch:

@@ -6,6 +6,8 @@ from pathlib import Path
 import logging
 import platform
 import atexit
+import psutil
+import json
 
 app = Flask(__name__)
 
@@ -34,6 +36,18 @@ def cleanup():
 
 # 終了時の処理を登録
 atexit.register(cleanup)
+
+# プロセスが実行中かどうかをチェックする関数
+def is_process_running(process_name):
+    """指定された名前のプロセスが実行中かどうかをチェックする"""
+    try:
+        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+            if process_name in ' '.join(proc.info['cmdline'] or []):
+                return True
+        return False
+    except Exception as e:
+        logger.error(f"プロセスチェック中にエラーが発生しました: {e}")
+        return False
 
 @app.route('/')
 def index():
@@ -98,6 +112,17 @@ def stop_upload():
     try:
         # 実行中のプロセスを終了
         os.system("pkill -f auto_uploader.py")
+        os.system("pkill -f slideshow.py")  # スライドショーのプロセスも停止
+        
+        # 進捗ファイルを削除
+        progress_path = Path.home() / '.google_photos_uploader' / 'upload_progress.json'
+        if progress_path.exists():
+            try:
+                os.remove(progress_path)
+                logger.info("停止操作により進捗ファイルを削除しました")
+            except Exception as e:
+                logger.error(f"進捗ファイルの削除に失敗しました: {e}")
+                
         return jsonify({'status': 'success', 'message': '停止しました'})
     except Exception as e:
         logger.error(f"エラーが発生しました: {e}")
@@ -160,6 +185,106 @@ def get_log():
     except Exception as e:
         logger.error(f"ログの取得中にエラーが発生しました: {e}")
         return jsonify({'logs': [f"ログの取得中にエラーが発生しました: {str(e)}"]})
+
+@app.route('/check_status', methods=['GET'])
+def check_status():
+    """現在のアップロードやスライドショーの状態を取得する"""
+    try:
+        uploader_running = is_process_running('auto_uploader.py')
+        slideshow_running = is_process_running('slideshow.py') or is_process_running('album_slideshow.py')
+        
+        return jsonify({
+            'uploader_running': uploader_running,
+            'slideshow_running': slideshow_running
+        })
+    except Exception as e:
+        logger.error(f"ステータスチェック中にエラーが発生しました: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/get_albums', methods=['GET'])
+def get_albums():
+    """Google Photosのアルバムリストを取得する"""
+    try:
+        # album_slideshow.pyのパスを取得
+        slideshow_script = Path(__file__).parent / "album_slideshow.py"
+        
+        # アルバムリスト取得コマンドを実行
+        result = subprocess.run(
+            ['python3', str(slideshow_script), '--list-albums-only'],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        
+        # JSONとして解析
+        albums = json.loads(result.stdout)
+        return jsonify(albums)
+    except subprocess.CalledProcessError as e:
+        logger.error(f"アルバムリスト取得中にエラーが発生しました: {e}")
+        return jsonify({'error': f"アルバムリスト取得中にエラーが発生しました: {e.stderr}"}), 500
+    except Exception as e:
+        logger.error(f"アルバムリスト取得中にエラーが発生しました: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/start_slideshow', methods=['POST'])
+def start_slideshow():
+    try:
+        # 現在のプロセス状態をチェック
+        uploader_running = is_process_running('auto_uploader.py')
+        slideshow_running = is_process_running('slideshow.py') or is_process_running('album_slideshow.py')
+        
+        if uploader_running:
+            return jsonify({'status': 'error', 'message': 'アップロードが実行中です。先に停止してください。'}), 400
+        
+        if slideshow_running:
+            return jsonify({'status': 'error', 'message': 'スライドショーは既に実行中です。'}), 400
+            
+        data = request.get_json()
+        album_name = data.get('album_name', '')
+        interval = data.get('interval', 5)
+        random = data.get('random', False)
+        fullscreen = data.get('fullscreen', True)
+        verbose = data.get('verbose', False)
+        
+        # album_slideshow.pyのパスを取得
+        slideshow_script = Path(__file__).parent / "album_slideshow.py"
+        
+        # コマンドを構築
+        command = ['python3', str(slideshow_script)]
+        
+        # オプションを追加
+        if album_name:
+            command.extend(['--album', album_name])
+            command.append('--exact-match')  # 完全一致のアルバム名が必要なオプションを追加
+        
+        if interval != 5:  # デフォルト値と異なる場合のみ追加
+            command.extend(['--interval', str(interval)])
+        if random:
+            command.append('--random')
+        if fullscreen:
+            command.append('--fullscreen')
+        if verbose:
+            command.append('--verbose')
+        
+        # バックグラウンドで実行
+        subprocess.Popen(command)
+        
+        return jsonify({'status': 'success', 'message': 'スライドショーを起動中'})
+    except Exception as e:
+        logger.error(f"スライドショー起動中にエラーが発生しました: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+# スライドショー専用の停止エンドポイント
+@app.route('/stop_slideshow', methods=['POST'])
+def stop_slideshow():
+    try:
+        # album_slideshow.pyのプロセスのみを停止
+        os.system("pkill -f album_slideshow.py")
+        
+        return jsonify({'status': 'success', 'message': 'スライドショーを停止しました'})
+    except Exception as e:
+        logger.error(f"エラーが発生しました: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 # Flaskのアクセスログを無効化
 logging.getLogger('werkzeug').setLevel(logging.ERROR)

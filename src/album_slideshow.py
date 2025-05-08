@@ -569,6 +569,8 @@ def main():
     parser.add_argument('--random', action='store_true', help='ランダムな順序で表示')
     parser.add_argument('--fullscreen', action='store_true', help='フルスクリーンモードで表示')
     parser.add_argument('--verbose', action='store_true', help='詳細なログを出力')
+    parser.add_argument('--exact-match', action='store_true', help='アルバム名を完全一致で検索')
+    parser.add_argument('--list-albums-only', action='store_true', help='アルバムリストをJSON形式で出力して終了')
     args = parser.parse_args()
     
     # 詳細ログモードが指定された場合
@@ -590,16 +592,45 @@ def main():
         logger.error("アルバムが見つかりません")
         return
     
+    # アルバムリストのみ出力する場合
+    if args.list_albums_only:
+        # アルバム情報をJSON形式で出力
+        albums_data = []
+        for album in albums:
+            albums_data.append({
+                'id': album.get('id'),
+                'title': album.get('title', '不明なアルバム'),
+                'itemCount': album.get('mediaItemsCount', '0')
+            })
+        print(json.dumps(albums_data))
+        return
+    
     # アルバムの選択
     selected_album = None
     if args.album:
         # コマンドラインで指定されたアルバム名を検索
         for album in albums:
-            if album.get('title') == args.album:
-                selected_album = album
-                break
+            if args.exact_match:
+                # 完全一致の場合
+                if album.get('title') == args.album:
+                    selected_album = album
+                    break
+            else:
+                # 部分一致の場合
+                if args.album.lower() in album.get('title', '').lower():
+                    selected_album = album
+                    break
+        
         if not selected_album:
-            logger.warning(f"指定されたアルバム '{args.album}' が見つかりません")
+            error_msg = f"指定されたアルバム '{args.album}' が見つかりません"
+            logger.warning(error_msg)
+            if args.exact_match:
+                # 完全一致が要求された場合は、エラーで終了
+                print(f"エラー: {error_msg}")
+                print("利用可能なアルバム:")
+                for album in albums:
+                    print(f" - {album.get('title')}")
+                return
     
     # アルバムが選択されてない場合はダイアログを表示
     if not selected_album:
