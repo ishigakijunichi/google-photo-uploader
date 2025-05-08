@@ -1,0 +1,6 @@
+- flaskでwebサーバー構築
+- webからスマホで操作（起動・オプション）
+- Google Photo libraryでクラウドのアルバム表示
+    - 動画は一旦未対応
+- sunoでbgm生成
+- github にアップロード
