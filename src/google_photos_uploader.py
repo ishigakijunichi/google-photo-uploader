@@ -217,7 +217,8 @@ def create_media_item(upload_token, file_name, creds, album_name=None):
             'newMediaItems': [
                 {
                     'simpleMediaItem': {
-                        'uploadToken': upload_token
+                        'uploadToken': upload_token,
+                        'fileName': file_name  # オリジナルのファイル名を保持
                     }
                 }
             ]

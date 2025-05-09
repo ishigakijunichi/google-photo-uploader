@@ -7,7 +7,6 @@ credential.json
 .LSOverride
 
 # Logs
-error_log.txt
 *.log
 
 # Python

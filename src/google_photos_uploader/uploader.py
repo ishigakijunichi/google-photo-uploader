@@ -187,10 +187,10 @@ def upload_photos(
     failed_files_dict: Dict[str, dict] = {}
     for i in range(0, len(successful), MAX_BATCH_SIZE):
         batch = successful[i : i + MAX_BATCH_SIZE]
-        tokens = [b["token"] for b in batch]
-        files = [b["file"] for b in batch]
-        result = batch_create_media_items(tokens, album_name or DEFAULT_ALBUM, verbose=verbose)
-        for tkn, fp in zip(tokens, files):
+        token_pairs = [(b["token"], Path(b["file"]).name) for b in batch]
+        file_paths = [b["file"] for b in batch]
+        result = batch_create_media_items(token_pairs, album_name or DEFAULT_ALBUM, verbose=verbose)
+        for (tkn, _), fp in zip(token_pairs, file_paths):
             if tkn in result.get("success", []):
                 success_files.append(fp)
             else:

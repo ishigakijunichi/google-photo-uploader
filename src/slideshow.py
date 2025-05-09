@@ -247,7 +247,7 @@ class SlideshowApp(BaseSlideshowApp):
                 album_name = progress.get('album_name', '')
                 
                 if completed:
-                    status_text = f"{album_name}にアップロードされました ({success}/{total}枚)"
+                    status_text = f"アルバム「{album_name}」にアップロードされました ({success}/{total}枚)"
                 else:
                     status_text = f"アップロード中: {success}/{total} (失敗 {failed})"
                     if album_name:

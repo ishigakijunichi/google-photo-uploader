@@ -104,7 +104,8 @@ def create_media_item(upload_token: str, file_name: str, creds: Credentials, alb
         request_body = {
             'newMediaItem': {
                 'simpleMediaItem': {
-                    'uploadToken': upload_token
+                    'uploadToken': upload_token,
+                    'fileName': file_name  # オリジナルのファイル名を保持
                 }
             }
         }
@@ -205,13 +206,43 @@ def batch_create_media_items(tokens: List[str], album_name: Optional[str], creds
             'newMediaItems': []
         }
         
-        # 各トークンについてnewMediaItemを追加
-        for token in tokens:
-            request_body['newMediaItems'].append({
+        # --------------------------------------------------
+        # トークンとファイル名の対応付け
+        # tokens は以下いずれかの形式を許容する
+        # 1. ["uploadToken1", "uploadToken2", ...]
+        # 2. [("uploadToken1", "fileName1.jpg"), ("uploadToken2", "fileName2.png"), ...]
+        # 3. [{"token": "uploadToken1", "fileName": "fileName1.jpg"}, ...]
+        #   バックワードコンパチのため、従来どおりトークンのみのリストも受け付ける。
+
+        def _extract_pair(item):
+            """内部ヘルパー: item から (token, file_name) タプルを取り出す"""
+            if isinstance(item, (tuple, list)) and len(item) >= 2:
+                return item[0], item[1]
+            if isinstance(item, dict):
+                return item.get('token') or item.get('uploadToken'), item.get('fileName') or item.get('file_name')
+            # 旧形式: トークンのみ
+            return item, None
+
+        tokens_only: List[str] = []  # トークン文字列のみを格納
+
+        for elem in tokens:
+            token, fname = _extract_pair(elem)
+            if not token:
+                # token が取得できない場合はスキップ
+                logger.warning("トークンが解析できませんでした。スキップします")
+                continue
+
+            tokens_only.append(token)
+
+            item = {
                 'simpleMediaItem': {
                     'uploadToken': token
                 }
-            })
+            }
+            # ファイル名が指定されている場合のみ fileName を付与
+            if fname:
+                item['simpleMediaItem']['fileName'] = fname
+            request_body['newMediaItems'].append(item)
         
         # アルバムIDを指定（アルバム名がある場合）
         if album_name:
@@ -220,7 +251,7 @@ def batch_create_media_items(tokens: List[str], album_name: Optional[str], creds
                 request_body['albumId'] = album_id
         
         # バッチ作成リクエストを送信
-        logger.info(f"{len(tokens)}個のメディアアイテムをバッチ作成中")
+        logger.info(f"{len(tokens_only)}個のメディアアイテムをバッチ作成中")
         response = requests.post(API_BASE_URL + '/mediaItems:batchCreate', headers=headers, json=request_body)
         
         if response.status_code == 200:
@@ -230,7 +261,7 @@ def batch_create_media_items(tokens: List[str], album_name: Optional[str], creds
             success_tokens = []
             failed_tokens = []
             
-            for result, token in zip(response_data.get('newMediaItemResults', []), tokens):
+            for result, token in zip(response_data.get('newMediaItemResults', []), tokens_only):
                 status = result.get('status', {})
                 # 成功判定: status.code が 0 または 'mediaItem' キーが存在
                 is_success = False
@@ -258,8 +289,8 @@ def batch_create_media_items(tokens: List[str], album_name: Optional[str], creds
             }
         else:
             logger.error(f"バッチ作成リクエスト失敗: {response.status_code} - {response.text}")
-            return {"success": [], "failed": tokens}
+            return {"success": [], "failed": tokens_only}
     
     except Exception as e:
         logger.error(f"バッチ作成中にエラーが発生: {e}")
-        return {"success": [], "failed": tokens}
+        return {"success": [], "failed": tokens_only}
