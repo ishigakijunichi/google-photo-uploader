@@ -15,6 +15,8 @@ from watchdog.events import FileSystemEventHandler
 import concurrent.futures
 import threading
 from google_photos_uploader.uploader import upload_photos as core_upload_photos
+from google_photos_uploader.uploader import _collect_media_files
+from slideshow import load_uploaded_files
 
 # ロギングの設定
 logging.basicConfig(
@@ -201,11 +203,31 @@ def upload_photos(dcim_path, album_name=None, show_slideshow=False, fullscreen=T
         
         # 写真がない場合でもスライドショーを表示するなら最近のファイルを表示
         if show_slideshow:
-            logger.info("アップロードする写真はありませんが、最近の写真でスライドショーを表示します")
+            logger.info("アップロードする写真はありませんが、SDカードの写真をスライドショーで表示します")
+            # photo_files から最大100枚をピックアップ
+            limited_files = photo_files[:min(len(photo_files), 100)]
+            logger.info(f"スライドショー用に {len(limited_files)}/{len(photo_files)} 枚を使用します")
+            
+            # 進捗ファイルを作成
+            progress_path = Path.home() / '.google_photos_uploader' / 'upload_progress.json'
+            progress_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(progress_path, 'w', encoding='utf-8') as f:
+                progress_data = {
+                    "files": limited_files,
+                    "total": len(limited_files),
+                    "success": 0,
+                    "failed": 0,
+                    "completed": False,
+                    "album_name": album_name or "SDカード",
+                    "message": "アップロードする写真はありません。SDカードの最近の写真を再生します。"
+                }
+                json.dump(progress_data, f)
+            
+            # 限定ファイルのみを表示
             show_uploaded_slideshow(
                 fullscreen=fullscreen,
                 recent=True,
-                current_only=False,  # アップロードする写真がないので最近の写真を表示
+                current_only=True,
                 interval=interval,
                 random_order=random_order,
                 no_pending=no_pending,
@@ -235,11 +257,31 @@ def upload_photos(dcim_path, album_name=None, show_slideshow=False, fullscreen=T
         
         # 写真がない場合でもスライドショーを表示するなら最近のファイルを表示
         if show_slideshow:
-            logger.info("アップロードする写真はありませんが、最近の写真でスライドショーを表示します")
+            logger.info("アップロードする写真はありませんが、SDカードの写真をスライドショーで表示します")
+            # photo_files から最大100枚をピックアップ
+            limited_files = photo_files[:min(len(photo_files), 100)]
+            logger.info(f"スライドショー用に {len(limited_files)}/{len(photo_files)} 枚を使用します")
+            
+            # 進捗ファイルを作成
+            progress_path = Path.home() / '.google_photos_uploader' / 'upload_progress.json'
+            progress_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(progress_path, 'w', encoding='utf-8') as f:
+                progress_data = {
+                    "files": limited_files,
+                    "total": len(limited_files),
+                    "success": 0,
+                    "failed": 0,
+                    "completed": False,
+                    "album_name": album_name or "SDカード",
+                    "message": "アップロードする写真はありません。SDカードの最近の写真を再生します。"
+                }
+                json.dump(progress_data, f)
+            
+            # 限定ファイルのみを表示
             show_uploaded_slideshow(
                 fullscreen=fullscreen,
                 recent=True,
-                current_only=False,  # アップロードする写真がないので最近の写真を表示
+                current_only=True,
                 interval=interval,
                 random_order=random_order,
                 no_pending=no_pending,

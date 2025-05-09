@@ -431,7 +431,10 @@ class AlbumSlideshowApp:
 
     def update_status(self, message):
         """ステータスラベルを更新"""
-        self.status_label.config(text=message)
+        # メッセージが渡されていても常に{current}/{total}形式で表示
+        if self.media_items:
+            status_text = f"{self.current_index + 1}/{len(self.media_items)}"
+            self.status_label.config(text=status_text)
 
     def update_music(self):
         """BGM の再生状況を監視し次曲を再生"""

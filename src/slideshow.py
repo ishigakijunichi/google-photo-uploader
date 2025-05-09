@@ -90,7 +90,10 @@ class SlideshowApp(BaseSlideshowApp):
         """現在のインデックスのファイルを表示"""
         if not self.image_files:
             return
-            
+        
+        # ステータスを即時更新
+        self.update_status()
+        
         file_path = self.image_files[self.current_index]
         try:
             # ファイルが存在するか確認
@@ -205,7 +208,9 @@ class SlideshowApp(BaseSlideshowApp):
             self.video_player = None
         self.current_index = (self.current_index + 1) % len(self.image_files)
         self.show_file()
-        
+        # ステータスを即時更新
+        self.update_status()
+
     def prev_file(self, event=None):
         """前のファイルに戻る"""
         if self.video_player:
@@ -213,7 +218,9 @@ class SlideshowApp(BaseSlideshowApp):
             self.video_player = None
         self.current_index = (self.current_index - 1) % len(self.image_files)
         self.show_file()
-        
+        # ステータスを即時更新
+        self.update_status()
+
     def toggle_play(self, event=None):
         """再生/一時停止を切り替え"""
         self.playing = not self.playing
@@ -231,6 +238,8 @@ class SlideshowApp(BaseSlideshowApp):
             if self.after_id:
                 self.root.after_cancel(self.after_id)
                 self.after_id = None
+        # ステータスを即時更新
+        self.update_status()
 
     def update_status(self):
         """アップロード進捗を読み取り、ラベルを更新する"""
@@ -245,8 +254,12 @@ class SlideshowApp(BaseSlideshowApp):
                 failed = progress.get('failed', 0)
                 completed = progress.get('completed', False)
                 album_name = progress.get('album_name', '')
+                custom_message = progress.get('message', '')
                 
-                if completed:
+                if custom_message:
+                    # カスタムメッセージがある場合はそれを表示
+                    status_text = custom_message
+                elif completed:
                     status_text = f"アルバム「{album_name}」にアップロードされました ({success}/{total}枚)"
                 else:
                     status_text = f"アップロード中: {success}/{total} (失敗 {failed})"
@@ -254,10 +267,19 @@ class SlideshowApp(BaseSlideshowApp):
                         status_text += f" - アルバム: {album_name}"
             except Exception as e:
                 logger.debug(f"進捗ファイルの読み込みに失敗しました: {e}")
+        
+        # スライドショーの現在の位置を表示
+        if self.image_files:
+            position_text = f"{self.current_index + 1}/{len(self.image_files)}"
+            if status_text:
+                status_text += f" {position_text}"
+            else:
+                status_text = position_text
+                
         # ラベルを更新
         self.status_label.config(text=status_text)
-        # 次回更新をスケジュール
-        self.root.after(2000, self.update_status)
+        # ポーリングは廃止
+        # self.root.after(2000, self.update_status)
 
     def update_music(self):
         """BGM の再生状況を監視し次曲を再生"""
@@ -456,6 +478,18 @@ def load_current_upload_files():
         files = progress.get('files', [])
         # 存在するファイルのみ返す
         existing = [p for p in files if os.path.exists(p)]
+        
+        # 最大100枚に制限（SDカード表示用）
+        if len(existing) > 100:
+            logger.info(f"スライドショー表示のため {len(existing)} ファイルを100枚に制限します")
+            existing = existing[:100]
+            
+            # 進捗ファイルも更新して、表示枚数を合わせる
+            progress["files"] = existing
+            progress["total"] = len(existing)
+            with open(progress_path, 'w', encoding='utf-8') as f:
+                json.dump(progress, f)
+        
         logger.info(f"現在アップロード中のファイル {len(existing)} 件を読み込みました")
         return existing
     except Exception as e:
