@@ -54,15 +54,26 @@ def find_sd_card():
     # Linuxの場合は/media/$USER以下を探す
     elif sys.platform.startswith('linux'):
         user = os.environ.get('USER', 'user')
-        for volume_name in VOLUME_NAMES:
-            # /media/$USER/以下を探す
-            sd_path = Path(f'/media/{user}') / volume_name
-            if sd_path.exists():
-                return sd_path
-            # Ubuntuの別のパターン
-            sd_path = Path('/media') / volume_name
-            if sd_path.exists():
-                return sd_path
+        # 一般的なマウントパスをチェック
+        mount_paths = [
+            Path(f'/media/{user}'),  # ユーザー固有のマウントポイント
+            Path('/media'),          # システム全体のマウントポイント
+            Path('/mnt'),            # 別の一般的なマウントポイント
+            Path('/run/media')       # 一部のディストリビューションで使用
+        ]
+        
+        for mount_path in mount_paths:
+            if mount_path.exists():
+                for volume_name in VOLUME_NAMES:
+                    # 完全一致のパスをチェック
+                    sd_path = mount_path / volume_name
+                    if sd_path.exists():
+                        return sd_path
+                    
+                    # 部分一致のパスをチェック（スペースや特殊文字の違いに対応）
+                    for path in mount_path.iterdir():
+                        if path.is_dir() and any(vol_name.lower() in path.name.lower() for vol_name in VOLUME_NAMES):
+                            return path
     # Windowsの場合はドライブレターを探す
     elif sys.platform == 'win32':
         import win32api
