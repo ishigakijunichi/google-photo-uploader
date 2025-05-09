@@ -128,7 +128,8 @@ class VideoPlayer:
         self.interval = interval
         self.cap: cv2.VideoCapture | None = None
         self.playing = False
-        self.frame_queue: queue.Queue = queue.Queue(maxsize=30)
+        # 4K フレームは 1 枚あたりメモリ消費が大きいため、保持数を最小限に抑える
+        self.frame_queue: queue.Queue = queue.Queue(maxsize=5)
         self.stop_event = threading.Event()
         self.thread: threading.Thread | None = None
 

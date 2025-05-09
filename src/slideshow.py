@@ -19,6 +19,7 @@ import threading
 import queue
 import pygame
 from google_photos_uploader.ui.base_slideshow import BaseSlideshowApp  # 追加
+from collections import OrderedDict  # 追加
 
 # ロギングの設定
 logging.basicConfig(
@@ -51,7 +52,8 @@ class SlideshowApp(BaseSlideshowApp):
         self.root = root
         self.image_files = image_files
         self.current_index = 0
-        self.images = []  # 画像のキャッシュ
+        # 現在と次の 1 枚だけを保持する軽量 LRU キャッシュ
+        self.image_cache: "OrderedDict[str, ImageTk.PhotoImage]" = OrderedDict()
         self.video_player = None  # 動画プレーヤー
         
         # ウィンドウタイトル
@@ -128,56 +130,65 @@ class SlideshowApp(BaseSlideshowApp):
                     self.video_player.stop()
                     self.video_player = None
                 
-                # 画像を読み込み
-                img = Image.open(file_path)
-                
-                # EXIF情報から回転情報を取得して適用
-                try:
-                    for orientation in ExifTags.TAGS.keys():
-                        if ExifTags.TAGS[orientation] == 'Orientation':
-                            break
+                # キャッシュ確認
+                cached = self.image_cache.get(file_path)
+                if cached is not None:
+                    photo = cached
+                else:
+                    # 画像を読み込み
+                    img = Image.open(file_path)
                     
-                    exif = img._getexif()
-                    if exif is not None and orientation in exif:
-                        if exif[orientation] == 2:
-                            img = img.transpose(Image.FLIP_LEFT_RIGHT)
-                        elif exif[orientation] == 3:
-                            img = img.transpose(Image.ROTATE_180)
-                        elif exif[orientation] == 4:
-                            img = img.transpose(Image.FLIP_TOP_BOTTOM)
-                        elif exif[orientation] == 5:
-                            img = img.transpose(Image.FLIP_LEFT_RIGHT).transpose(Image.ROTATE_90)
-                        elif exif[orientation] == 6:
-                            img = img.transpose(Image.ROTATE_270)
-                        elif exif[orientation] == 7:
-                            img = img.transpose(Image.FLIP_LEFT_RIGHT).transpose(Image.ROTATE_270)
-                        elif exif[orientation] == 8:
-                            img = img.transpose(Image.ROTATE_90)
-                except (AttributeError, KeyError, IndexError):
-                    # EXIFデータがない場合やエラーの場合は無視
-                    pass
-                
-                # 画像をリサイズ
-                width, height = img.size
-                screen_width = self.root.winfo_width()
-                screen_height = self.root.winfo_height()
-                
-                if screen_width > 0 and screen_height > 0:
-                    # アスペクト比を維持してリサイズ
-                    aspect_ratio = width / height
-                    if width > screen_width:
-                        width = screen_width
-                        height = int(width / aspect_ratio)
-                    if height > screen_height:
-                        height = screen_height
-                        width = int(height * aspect_ratio)
+                    # EXIF情報から回転情報を取得して適用
+                    try:
+                        for orientation in ExifTags.TAGS.keys():
+                            if ExifTags.TAGS[orientation] == 'Orientation':
+                                break
+                        
+                        exif = img._getexif()
+                        if exif is not None and orientation in exif:
+                            if exif[orientation] == 2:
+                                img = img.transpose(Image.FLIP_LEFT_RIGHT)
+                            elif exif[orientation] == 3:
+                                img = img.transpose(Image.ROTATE_180)
+                            elif exif[orientation] == 4:
+                                img = img.transpose(Image.FLIP_TOP_BOTTOM)
+                            elif exif[orientation] == 5:
+                                img = img.transpose(Image.FLIP_LEFT_RIGHT).transpose(Image.ROTATE_90)
+                            elif exif[orientation] == 6:
+                                img = img.transpose(Image.ROTATE_270)
+                            elif exif[orientation] == 7:
+                                img = img.transpose(Image.FLIP_LEFT_RIGHT).transpose(Image.ROTATE_270)
+                            elif exif[orientation] == 8:
+                                img = img.transpose(Image.ROTATE_90)
+                    except (AttributeError, KeyError, IndexError):
+                        # EXIFデータがない場合やエラーの場合は無視
+                        pass
                     
-                    img = img.resize((width, height), Image.Resampling.LANCZOS)
+                    # 画像をリサイズ (thumbnail は in-place, アスペクト比保持)
+                    sw = self.root.winfo_width() or 3840
+                    sh = self.root.winfo_height() or 2160
+                    if sw > 0 and sh > 0:
+                        # 4K ディスプレイ想定: Pillow が自動で縮小してくれる
+                        img.thumbnail((sw, sh), Image.Resampling.LANCZOS)
+
+                    # Tk 用イメージ生成
+                    photo = ImageTk.PhotoImage(img)
+
+                    # キャッシュへ追加し、サイズを 2 枚に制限
+                    self.image_cache[file_path] = photo
+                    if len(self.image_cache) > 2:
+                        # 先頭 (最も古い) を削除
+                        self.image_cache.popitem(last=False)
                 
                 # 画像を表示
-                photo = ImageTk.PhotoImage(img)
                 self.image_label.configure(image=photo)
                 self.image_label.image = photo  # 参照を保持
+                
+                # 次画像を非同期で先読み
+                next_idx = (self.current_index + 1) % len(self.image_files)
+                next_path = self.image_files[next_idx]
+                if next_path not in self.image_cache:
+                    threading.Thread(target=self._prefetch_image, args=(next_path,), daemon=True).start()
                 
                 # 次の画像への切り替えをスケジュール
                 self.schedule_next_file()
@@ -300,6 +311,25 @@ class SlideshowApp(BaseSlideshowApp):
 
     def schedule_next_item(self):
         self.schedule_next_file()
+
+    # --------------------------------------------------
+    # 画像先読み
+    # --------------------------------------------------
+
+    def _prefetch_image(self, path: str):
+        """次に表示する画像を事前に読み込みキャッシュ"""
+        try:
+            img = Image.open(path)
+            sw = self.root.winfo_width() or 3840
+            sh = self.root.winfo_height() or 2160
+            img.thumbnail((sw, sh), Image.Resampling.LANCZOS)
+            photo = ImageTk.PhotoImage(img)
+            # キャッシュ登録 (LRU 制御)
+            self.image_cache[path] = photo
+            if len(self.image_cache) > 2:
+                self.image_cache.popitem(last=False)
+        except Exception as e:
+            logger.debug(f"prefetch 失敗: {e}")
 
 def find_pending_upload_files():
     """アップロード予定のファイルを探す"""
