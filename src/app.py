@@ -8,6 +8,7 @@ import platform
 import atexit
 import psutil
 import json
+import time
 
 # アプリケーションのルートディレクトリを設定
 APP_ROOT = Path(__file__).parent
@@ -317,12 +318,17 @@ def start_slideshow():
         logger.error(f"スライドショー起動中にエラーが発生しました: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-# スライドショー専用の停止エンドポイント
 @app.route('/stop_slideshow', methods=['POST'])
 def stop_slideshow():
     try:
-        # album_slideshow.pyのプロセスのみを停止
-        os.system("pkill -f album_slideshow.py")
+        # スライドショープロセスを確実に終了
+        os.system("pkill -f 'slideshow.py|album_slideshow.py'")
+        # 念のため少し待機
+        time.sleep(1)
+        # プロセスが残っていないか確認
+        if is_process_running('slideshow.py') or is_process_running('album_slideshow.py'):
+            # より強力な終了シグナルを送信
+            os.system("pkill -9 -f 'slideshow.py|album_slideshow.py'")
         
         return jsonify({'status': 'success', 'message': 'スライドショーを停止しました'})
     except Exception as e:

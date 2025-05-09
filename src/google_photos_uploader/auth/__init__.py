@@ -2,6 +2,10 @@ from pathlib import Path
 import json
 import logging
 from typing import Optional
+import qrcode
+import io
+import base64
+from PIL import Image
 
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -56,7 +60,43 @@ def get_credentials() -> Optional[Credentials]:
             try:
                 flow = InstalledAppFlow.from_client_secrets_file(
                     CREDENTIALS_FILE, SCOPES)
-                creds = flow.run_local_server(port=0)
+                
+                # 認証URLを取得
+                auth_url, _ = flow.authorization_url(prompt='consent')
+                
+                # QRコードを生成
+                qr = qrcode.QRCode(
+                    version=1,
+                    error_correction=qrcode.constants.ERROR_CORRECT_L,
+                    box_size=10,
+                    border=4,
+                )
+                qr.add_data(auth_url)
+                qr.make(fit=True)
+                
+                # QRコードを画像として生成
+                qr_image = qr.make_image(fill_color="black", back_color="white")
+                
+                # 画像をバイト列に変換
+                img_byte_arr = io.BytesIO()
+                qr_image.save(img_byte_arr, format='PNG')
+                img_byte_arr = img_byte_arr.getvalue()
+                
+                # Base64エンコード
+                qr_base64 = base64.b64encode(img_byte_arr).decode()
+                
+                # QRコードを表示
+                print("\n以下のQRコードをスキャンして認証を完了してください：")
+                print(f"data:image/png;base64,{qr_base64}")
+                
+                # 認証コードの入力を待つ
+                print("\n認証コードを入力してください：")
+                code = input()
+                
+                # 認証コードを使用して認証を完了
+                flow.fetch_token(code=code)
+                creds = flow.credentials
+                
             except Exception as e:
                 logger.error(f"新規認証に失敗: {e}")
                 return None

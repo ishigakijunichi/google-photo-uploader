@@ -23,3 +23,6 @@ pygame>=2.5.0
 # Webインターフェース用
 Flask>=2.0.0
 Flask-WTF>=1.0.0
+
+# QRコード生成用
+qrcode>=7.4.2
