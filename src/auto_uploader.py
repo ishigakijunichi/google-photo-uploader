@@ -43,13 +43,28 @@ DEFAULT_ALBUM = "Photo Uploader"  # デフォルトのアルバム名
 MAX_WORKERS = 5  # 並列アップロードの最大ワーカー数
 MAX_BATCH_SIZE = 50  # 一度に作成できるメディアアイテムの最大数
 
+def _is_valid_sd_root(path: Path) -> bool:
+    """SDカードのルート候補にDCIMフォルダが存在するかどうかを判定"""
+    if not path or not path.exists():
+        return False
+    if (path / DCIM_PATH).exists():
+        return True
+    # 1階層下にDCIMがある場合（例: /run/media/pi/volname/Some/Sub/DCIM）
+    try:
+        for sub in path.iterdir():
+            if sub.is_dir() and (sub / DCIM_PATH).exists():
+                return True
+    except PermissionError:
+        pass
+    return False
+
 def find_sd_card():
     """SDカードのパスを探す"""
     # macOSの場合は/Volumes以下を探す
     if sys.platform == 'darwin':
         for volume_name in VOLUME_NAMES:
             sd_path = Path('/Volumes') / volume_name
-            if sd_path.exists():
+            if _is_valid_sd_root(sd_path):
                 return sd_path
     # Linuxの場合は/media/$USER以下を探す
     elif sys.platform.startswith('linux'):
@@ -64,16 +79,35 @@ def find_sd_card():
         
         for mount_path in mount_paths:
             if mount_path.exists():
-                for volume_name in VOLUME_NAMES:
-                    # 完全一致のパスをチェック
-                    sd_path = mount_path / volume_name
-                    if sd_path.exists():
-                        return sd_path
-                    
-                    # 部分一致のパスをチェック（スペースや特殊文字の違いに対応）
-                    for path in mount_path.iterdir():
-                        if path.is_dir() and any(vol_name.lower() in path.name.lower() for vol_name in VOLUME_NAMES):
-                            return path
+                # 1階層目と2階層目を探索
+                search_dirs = [mount_path]
+                try:
+                    search_dirs.extend([p for p in mount_path.iterdir() if p.is_dir()])
+                except PermissionError:
+                    pass  # 権限のないディレクトリは無視
+
+                for search_dir in search_dirs:
+                    for volume_name in VOLUME_NAMES:
+                        candidate = search_dir / volume_name
+                        if _is_valid_sd_root(candidate):
+                            return candidate
+
+                    # 各ディレクトリ内のサブディレクトリを部分一致でチェック
+                    try:
+                        for sub in search_dir.iterdir():
+                            if sub.is_dir() and any(vol.lower() in sub.name.lower() for vol in VOLUME_NAMES):
+                                if _is_valid_sd_root(sub):
+                                    return sub
+                    except PermissionError:
+                        continue
+
+                    # DCIMフォルダを含む任意のサブディレクトリを探す（ボリューム名が一致しない場合のフォールバック）
+                    try:
+                        for sub in search_dir.iterdir():
+                            if sub.is_dir() and (sub / DCIM_PATH).exists():
+                                return sub
+                    except PermissionError:
+                        continue
     # Windowsの場合はドライブレターを探す
     elif sys.platform == 'win32':
         import win32api
