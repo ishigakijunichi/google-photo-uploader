@@ -31,7 +31,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # 設定値
-VOLUME_NAME = "PHOTO_UPLOAD_SD"  # SDカードのボリューム名
+VOLUME_NAMES = ["PHOTO_UPLOAD_SD", "62 GB Volume", "Untitled"]  # SDカードのボリューム名のリスト
 DCIM_PATH = "DCIM"  # DCIMフォルダのパス
 SUPPORTED_EXTENSIONS = [
     '.jpg', '.jpeg', '.png', '.gif', '.bmp',  # 画像ファイル
@@ -44,36 +44,35 @@ MAX_WORKERS = 5  # 並列アップロードの最大ワーカー数
 MAX_BATCH_SIZE = 50  # 一度に作成できるメディアアイテムの最大数
 
 def find_sd_card():
-    """
-    'Untitled'という名前のSDカードをマウントポイントから探す
-    """
+    """SDカードのパスを探す"""
     # macOSの場合は/Volumes以下を探す
     if sys.platform == 'darwin':
-        sd_path = Path('/Volumes') / VOLUME_NAME
-        if sd_path.exists():
-            return sd_path
+        for volume_name in VOLUME_NAMES:
+            sd_path = Path('/Volumes') / volume_name
+            if sd_path.exists():
+                return sd_path
     # Linuxの場合は/media/$USER以下を探す
     elif sys.platform.startswith('linux'):
         user = os.environ.get('USER', 'user')
-        sd_path = Path(f'/media/{user}') / VOLUME_NAME
-        if sd_path.exists():
-            return sd_path
-        # Ubuntuの別のパターン
-        sd_path = Path('/media') / VOLUME_NAME
-        if sd_path.exists():
-            return sd_path
+        for volume_name in VOLUME_NAMES:
+            # /media/$USER/以下を探す
+            sd_path = Path(f'/media/{user}') / volume_name
+            if sd_path.exists():
+                return sd_path
+            # Ubuntuの別のパターン
+            sd_path = Path('/media') / volume_name
+            if sd_path.exists():
+                return sd_path
     # Windowsの場合はドライブレターを探す
     elif sys.platform == 'win32':
         import win32api
-        drives = win32api.GetLogicalDriveStrings().split('\000')[:-1]
-        for drive in drives:
+        for drive in win32api.GetLogicalDriveStrings().split('\000')[:-1]:
             try:
                 volume_name = win32api.GetVolumeInformation(drive)[0]
-                if volume_name == VOLUME_NAME:
+                if volume_name in VOLUME_NAMES:
                     return Path(drive)
             except:
                 continue
-                
     return None
 
 def upload_single_file(file_path, album_name=None, verbose=False):
@@ -481,13 +480,13 @@ class SDCardHandler(FileSystemEventHandler):
         sd_path = None
         
         # 特定のボリュームに関するイベントの場合
-        if VOLUME_NAME in event.src_path:
+        if any(volume in event.src_path for volume in VOLUME_NAMES):
             volume_path = Path(event.src_path)
             # イベントパスがボリューム自体かその親ディレクトリの場合
-            if volume_path.name == VOLUME_NAME:
+            if volume_path.name in VOLUME_NAMES:
                 sd_path = volume_path
-            elif '/Volumes/' + VOLUME_NAME in event.src_path:
-                sd_path = Path('/Volumes') / VOLUME_NAME
+            elif '/Volumes/' + VOLUME_NAMES[0] in event.src_path:
+                sd_path = Path('/Volumes') / VOLUME_NAMES[0]
                 
             logger.debug(f"対象ボリュームのイベント: {sd_path}")
         
@@ -532,7 +531,7 @@ class SDCardHandler(FileSystemEventHandler):
             try:
                 for volume in volumes_dir.iterdir():
                     logger.debug(f"ボリュームをチェック: {volume}")
-                    if volume.is_dir() and volume.name == VOLUME_NAME:
+                    if volume.is_dir() and volume.name in VOLUME_NAMES:
                         logger.info(f"対象のボリュームを発見: {volume}")
                         if (volume / DCIM_PATH).exists():
                             logger.info(f"SDカード検出: {volume}")
@@ -687,7 +686,7 @@ def main():
         
         # macOSの場合は、特定のボリューム名も直接監視
         if sys.platform == 'darwin':
-            specific_volume = Path('/Volumes') / VOLUME_NAME
+            specific_volume = Path('/Volumes') / VOLUME_NAMES[0]
             if specific_volume.exists():
                 logger.info(f"特定のボリュームを監視: {specific_volume}")
                 observer.schedule(event_handler, str(specific_volume), recursive=False)
