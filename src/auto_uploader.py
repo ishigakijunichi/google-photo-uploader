@@ -31,7 +31,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # 設定値
-VOLUME_NAME = "Untitled"  # SDカードのボリューム名
+VOLUME_NAME = "PHOTO_UPLOAD_SD"  # SDカードのボリューム名
 DCIM_PATH = "DCIM"  # DCIMフォルダのパス
 SUPPORTED_EXTENSIONS = [
     '.jpg', '.jpeg', '.png', '.gif', '.bmp',  # 画像ファイル

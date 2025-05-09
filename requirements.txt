@@ -6,6 +6,7 @@ google-auth-httplib2>=0.1.0
 
 # ファイルシステム監視用
 watchdog>=2.1.7
+psutil>=5.9.0
 
 # 画像処理用
 Pillow>=9.0.0

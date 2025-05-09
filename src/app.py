@@ -9,7 +9,50 @@ import atexit
 import psutil
 import json
 
-app = Flask(__name__)
+# アプリケーションのルートディレクトリを設定
+APP_ROOT = Path(__file__).parent
+TEMPLATE_DIR = APP_ROOT / 'templates'
+STATIC_DIR = APP_ROOT / 'static'
+
+app = Flask(__name__,
+           template_folder=str(TEMPLATE_DIR),
+           static_folder=str(STATIC_DIR))
+
+# 必要なディレクトリとファイルのパスを設定
+CONFIG_DIR = Path.home() / '.google_photos_uploader'
+LOG_FILE = CONFIG_DIR / 'app.log'
+UPLOADER_LOG = CONFIG_DIR / 'uploader.log'
+PROGRESS_FILE = CONFIG_DIR / 'upload_progress.json'
+CREDENTIALS_FILE = CONFIG_DIR / 'credentials.json'
+
+# 必要なディレクトリとファイルを作成
+def setup_directories():
+    """必要なディレクトリとファイルを作成する"""
+    try:
+        # 設定ディレクトリを作成
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        
+        # ログファイルを作成（存在しない場合）
+        LOG_FILE.touch(exist_ok=True)
+        UPLOADER_LOG.touch(exist_ok=True)
+        
+        # 進捗ファイルを作成（存在しない場合）
+        if not PROGRESS_FILE.exists():
+            with open(PROGRESS_FILE, 'w') as f:
+                json.dump({}, f)
+        
+        # credentials.jsonの存在確認
+        if not CREDENTIALS_FILE.exists():
+            logging.warning("credentials.jsonが見つかりません。Google認証の設定が必要です。")
+            logging.warning("Google Cloud Consoleから認証情報をダウンロードし、~/.google_photos_uploader/credentials.jsonに配置してください。")
+        
+        logging.info("必要なディレクトリとファイルの作成が完了しました")
+    except Exception as e:
+        logging.error(f"ディレクトリとファイルの作成中にエラーが発生しました: {e}")
+        raise
+
+# アプリケーション起動時にディレクトリをセットアップ
+setup_directories()
 
 # ロギングの設定
 logging.basicConfig(
@@ -17,8 +60,8 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S',
     handlers=[
-        logging.FileHandler(Path.home() / '.google_photos_uploader' / 'app.log'),
-        logging.NullHandler()  # 標準出力への出力を無効化
+        logging.FileHandler(LOG_FILE),
+        logging.StreamHandler()  # 標準出力にもログを出力
     ]
 )
 logger = logging.getLogger(__name__)
@@ -133,14 +176,14 @@ def unmount_sd():
     try:
         # プラットフォームに応じたアンマウントコマンドを実行
         if platform.system() == 'Darwin':  # macOS
-            subprocess.run(['diskutil', 'unmount', '/Volumes/Untitled'], check=True)
+            subprocess.run(['diskutil', 'unmount', '/Volumes/PHOTO_UPLOAD_SD'], check=True)
             message = 'SDカードをアンマウントしました'
         elif platform.system() == 'Linux':
             # Linuxの場合、ユーザー名を取得
             user = os.environ.get('USER', 'user')
-            mount_point = f'/media/{user}/Untitled'
+            mount_point = f'/media/{user}/PHOTO_UPLOAD_SD'
             if not os.path.exists(mount_point):
-                mount_point = '/media/Untitled'
+                mount_point = '/media/PHOTO_UPLOAD_SD'
             subprocess.run(['umount', mount_point], check=True)
             message = 'SDカードをアンマウントしました'
         elif platform.system() == 'Windows':
@@ -150,7 +193,7 @@ def unmount_sd():
             for drive in drives:
                 try:
                     volume_name = win32api.GetVolumeInformation(drive)[0]
-                    if volume_name == 'Untitled':
+                    if volume_name == 'PHOTO_UPLOAD_SD':
                         subprocess.run(['eject', drive], check=True)
                         message = 'SDカードをアンマウントしました'
                         break
@@ -286,8 +329,19 @@ def stop_slideshow():
         logger.error(f"エラーが発生しました: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+@app.route('/test')
+def test():
+    return render_template('test.html')
+
 # Flaskのアクセスログを無効化
 logging.getLogger('werkzeug').setLevel(logging.ERROR)
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8080, debug=False) 
+    # 静的ファイルのパスを確認
+    if not STATIC_DIR.exists():
+        logging.error(f"静的ファイルディレクトリが見つかりません: {STATIC_DIR}")
+    if not TEMPLATE_DIR.exists():
+        logging.error(f"テンプレートディレクトリが見つかりません: {TEMPLATE_DIR}")
+    
+    # デバッグモードで起動
+    app.run(host='0.0.0.0', port=5000, debug=True) 

@@ -31,7 +31,7 @@ AUDIO_EXTENSIONS: Set[str] = {
     '.mp3', '.wav', '.ogg', '.flac', '.aac', '.m4a'
 }
 
-def find_sd_card(volume_name: str = "Untitled") -> Optional[Path]:
+def find_sd_card(volume_name: str = "PHOTO_UPLOAD_SD") -> Optional[Path]:
     """SDカードのマウントポイントを探す
 
     Args:
