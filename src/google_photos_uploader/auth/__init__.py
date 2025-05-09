@@ -77,17 +77,12 @@ def get_credentials() -> Optional[Credentials]:
                 # QRコードを画像として生成
                 qr_image = qr.make_image(fill_color="black", back_color="white")
                 
-                # 画像をバイト列に変換
-                img_byte_arr = io.BytesIO()
-                qr_image.save(img_byte_arr, format='PNG')
-                img_byte_arr = img_byte_arr.getvalue()
+                # QRコードをファイルとして保存
+                qr_path = CREDENTIALS_DIR / 'auth_qr.png'
+                qr_image.save(qr_path)
                 
-                # Base64エンコード
-                qr_base64 = base64.b64encode(img_byte_arr).decode()
-                
-                # QRコードを表示
-                print("\n以下のQRコードをスキャンして認証を完了してください：")
-                print(f"data:image/png;base64,{qr_base64}")
+                print(f"\nQRコードを保存しました: {qr_path}")
+                print("このQRコードをスキャンして認証を完了してください。")
                 
                 # 認証コードの入力を待つ
                 print("\n認証コードを入力してください：")
