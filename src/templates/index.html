@@ -40,7 +40,7 @@
             <h1>Google Photos ツール</h1>
             <div class="tabs">
                 <div class="tab active" data-tab="upload">アップロード</div>
-                <div class="tab" data-tab="slideshow">スライドショー</div>
+                <div class="tab" data-tab="slideshow">アルバムを再生</div>
             </div>
             <div id="status" class="status"></div>
             <!-- アップロードタブ -->
@@ -79,29 +79,6 @@
                     </div>
                     <div class="section">
                         <h3>スライドショー設定</h3>
-                        <div class="form-group">
-                            <label>
-                                <input
-                                    type="radio"
-                                    name="display_mode"
-                                    value="all"
-                                    id="all_photos"
-                                >
-                                全ての写真を表示
-                            </label>
-                        </div>
-                        <div class="form-group">
-                            <label>
-                                <input
-                                    type="radio"
-                                    name="display_mode"
-                                    value="current"
-                                    id="current_only"
-                                    checked
-                                >
-                                アップロードする写真だけを表示
-                            </label>
-                        </div>
                         <div class="form-group">
                             <label for="slideshow_interval">表示間隔（秒）</label>
                             <input
@@ -279,11 +256,9 @@
                 interval: parseInt(document.getElementById('interval').value),
                 slideshow: document.getElementById('slideshow').checked,
                 fullscreen: document.getElementById('fullscreen').checked,
-                all_photos: document.querySelector('input[name="display_mode"]:checked').value === 'all',
-                current_only: document.querySelector('input[name="display_mode"]:checked').value === 'current',
                 slideshow_interval: parseInt(document.getElementById('slideshow_interval').value),
                 random: document.getElementById('random').checked,
-                no_pending: document.querySelector('input[name="display_mode"]:checked').value === 'current',
+                no_pending: true,
                 verbose: document.getElementById('verbose').checked
             };
             

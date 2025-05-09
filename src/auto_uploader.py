@@ -14,10 +14,11 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import concurrent.futures
 import threading
+from google_photos_uploader.uploader import upload_photos as core_upload_photos
 
 # ロギングの設定
 logging.basicConfig(
-    level=logging.DEBUG,  # INFOからDEBUGに変更してより詳細なログを出力
+    level=logging.INFO,  # デフォルトは INFO。--verbose 指定時に DEBUG に変更
     format='%(asctime)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S',
     handlers=[
@@ -184,279 +185,101 @@ def batch_create_media_items(upload_tokens, album_name=None, verbose=False):
 def upload_photos(dcim_path, album_name=None, show_slideshow=False, fullscreen=True, recent=True, current_only=False,
                  interval=5, random_order=False, no_pending=False, verbose=False, bgm_files=None, all_photos=False):
     """
-    指定されたDCIMパス内の写真と動画をGoogle Photosにアップロード
+    写真のアップロード処理と必要に応じてスライドショーを表示
     
-    Args:
-        dcim_path (Path): DCIMフォルダのパス
-        album_name (str): アップロード先のアルバム名（オプション）
-        show_slideshow (bool): アップロード後にスライドショーを表示するかどうか
-        fullscreen (bool): スライドショーをフルスクリーンで表示するかどうか
-        recent (bool): 最新の写真のみ表示するかどうか
-        current_only (bool): 最新の写真のみアップロードするかどうか
-        interval (int): 画像の表示間隔（秒）
-        random_order (bool): ランダム順で表示するかどうか
-        no_pending (bool): アップロード予定/失敗ファイルを含めないかどうか
-        verbose (bool): 詳細なログを出力するかどうか
-        bgm_files (list): BGMとして再生する音楽ファイルまたはディレクトリのリスト
-        all_photos (bool): すべての写真をスライドショーに表示するかどうか
-        
-    Returns:
-        bool: 成功した場合はTrue
+    処理順序:
+    1. アップロードする写真を特定（ここではまだアップロードしない）
+    2. スライドショーを表示（指定がある場合）
+    3. アップロード処理
     """
-    # DCIMパス内のすべてのフォルダを探索
-    photo_files = []
-    for ext in SUPPORTED_EXTENSIONS:
-        photo_files.extend(glob.glob(str(dcim_path / "**" / f"*{ext}"), recursive=True))
-        photo_files.extend(glob.glob(str(dcim_path / "**" / f"*{ext.upper()}"), recursive=True))
+    from google_photos_uploader.uploader import _collect_media_files, _load_logs
     
+    # 1. アップロードする写真を特定
+    photo_files = _collect_media_files(Path(dcim_path))
     if not photo_files:
-        logger.info(f"DCIMフォルダ {dcim_path} に写真が見つかりません")
+        logger.info(f"DCIM に対象ファイルがありません: {dcim_path}")
+        
+        # 写真がない場合でもスライドショーを表示するなら最近のファイルを表示
+        if show_slideshow:
+            logger.info("アップロードする写真はありませんが、最近の写真でスライドショーを表示します")
+            show_uploaded_slideshow(
+                fullscreen=fullscreen,
+                recent=True,
+                current_only=False,  # アップロードする写真がないので最近の写真を表示
+                interval=interval,
+                random_order=random_order,
+                no_pending=no_pending,
+                verbose=verbose,
+                bgm_files=bgm_files,
+            )
         return False
     
-    logger.info(f"{len(photo_files)}枚の写真が見つかりました")
+    # アップロード済み/失敗ログを読み込み
+    uploaded_files, failed_files, _, _ = _load_logs()
     
-    # アップロード済みファイルの記録を保持するファイル
-    uploaded_log = Path.home() / '.google_photos_uploader' / 'uploaded_files.txt'
-    uploaded_log.parent.mkdir(parents=True, exist_ok=True)
-    
-    # アップロード済みファイルのリストを読み込み
-    uploaded_files = set()
-    if uploaded_log.exists():
-        with open(uploaded_log, 'r', encoding='utf-8') as f:
-            uploaded_files = set(line.strip() for line in f.readlines())
-    
-    # 失敗したファイルの記録を保持するファイル
-    failed_log = Path.home() / '.google_photos_uploader' / 'failed_files.json'
-    failed_files = {}
-    
-    # 失敗ログがあれば読み込む
-    if failed_log.exists():
-        try:
-            with open(failed_log, 'r', encoding='utf-8') as f:
-                failed_files = json.load(f)
-        except json.JSONDecodeError:
-            logger.warning("失敗ログの解析に失敗しました。新しいログを作成します。")
-            failed_files = {}
-    
-    # アップロードするファイルをフィルタリング
+    # 新規ファイルとリトライ対象を選定
     new_files = []
     retry_files = []
-    
     for f in photo_files:
         if f in uploaded_files:
             continue
-        
-        # 失敗記録があり、最大試行回数に達していない場合は再試行リストに追加
-        if f in failed_files:
-            retry_count = failed_files[f].get('retry_count', 0)
-            if retry_count < MAX_RETRIES:
-                retry_files.append(f)
-                logger.info(f"再試行予定のファイル (試行回数: {retry_count+1}/{MAX_RETRIES}): {f}")
-            else:
-                logger.warning(f"最大試行回数に達したためスキップ: {f}")
-        else:
+        if f in failed_files and failed_files[f].get("retry_count", 0) < MAX_RETRIES:
+            retry_files.append(f)
+        elif f not in failed_files:
             new_files.append(f)
     
-    # 新規ファイルと再試行ファイルをまとめる
-    all_files = new_files + retry_files
+    all_upload_files = new_files + retry_files
     
-    if not all_files:
-        logger.info("新しい写真はありません")
+    if not all_upload_files:
+        logger.info("アップロード対象ファイルはありません")
+        
+        # 写真がない場合でもスライドショーを表示するなら最近のファイルを表示
+        if show_slideshow:
+            logger.info("アップロードする写真はありませんが、最近の写真でスライドショーを表示します")
+            show_uploaded_slideshow(
+                fullscreen=fullscreen,
+                recent=True,
+                current_only=False,  # アップロードする写真がないので最近の写真を表示
+                interval=interval,
+                random_order=random_order,
+                no_pending=no_pending,
+                verbose=verbose,
+                bgm_files=bgm_files,
+            )
         return False
     
-    logger.info(f"{len(new_files)}枚の新しい写真と{len(retry_files)}枚の再試行写真、合計{len(all_files)}枚をアップロードします")
-    
-    # アップロード進捗を記録するファイルを準備
-    progress_path = Path.home() / '.google_photos_uploader' / 'upload_progress.json'
-    progress_lock = threading.Lock()  # 進捗データ更新用のロック
-    progress_data = {
-        'total': len(all_files),
-        'success': 0,
-        'failed': 0,
-        'current': 0,
-        'completed': False,
-        'files': all_files,  # スライドショーでアップロード対象のみ表示するため
-        'album_name': album_name or DEFAULT_ALBUM  # アルバム名を追加
-    }
-    try:
-        with open(progress_path, 'w', encoding='utf-8') as f:
-            json.dump(progress_data, f, ensure_ascii=False)
-    except Exception as e:
-        logger.error(f"進捗ファイルの作成に失敗しました: {e}")
-    
-    # アップロード開始前にスライドショーを表示（アップロードと同時に表示）
+    # 2. スライドショーを表示（アップロード対象の写真を表示）
     if show_slideshow:
-        logger.info("アップロードと同時にスライドショーを開始します")
-        show_uploaded_slideshow(fullscreen=fullscreen, recent=not all_photos, current_only=current_only,
-                              interval=interval, random_order=random_order, no_pending=no_pending,
-                              verbose=verbose, bgm_files=bgm_files)
-    
-    # ステップ1: 並列ファイルアップロード
-    # アップロード結果を保存するディクショナリ
-    upload_results = []
-    success_files = []
-    failed_files_dict = {}
-    
-    # 進捗更新関数
-    def update_progress(success_count, failed_count, current_count):
-        with progress_lock:
-            progress_data['success'] = success_count
-            progress_data['failed'] = failed_count
-            progress_data['current'] = current_count
-            try:
-                with open(progress_path, 'w', encoding='utf-8') as f:
-                    json.dump(progress_data, f, ensure_ascii=False)
-            except Exception as e:
-                logger.debug(f"進捗ファイルの更新に失敗しました: {e}")
-    
-    # 並列アップロード関数
-    def parallel_upload_task(file_path, idx):
-        retry_count = failed_files.get(file_path, {}).get('retry_count', 0) if file_path in failed_files else 0
+        # 一時的な進捗ファイルを作成してアップロード対象ファイルをスライドショーに表示
+        progress_path = Path.home() / '.google_photos_uploader' / 'upload_progress.json'
+        progress_path.parent.mkdir(parents=True, exist_ok=True)
         
-        try:
-            # ファイルバイトをアップロードしてトークンを取得
-            token = upload_single_file(file_path, album_name, verbose)
-            
-            if token:
-                return {
-                    'file': file_path,
-                    'token': token,
-                    'success': True,
-                    'idx': idx
-                }
-            else:
-                # 失敗情報を記録
-                failed_info = {
-                    'file': file_path,
-                    'retry_count': retry_count + 1,
-                    'success': False,
-                    'last_error': 'トークン取得に失敗',
-                    'last_attempt': time.strftime('%Y-%m-%d %H:%M:%S'),
-                    'idx': idx
-                }
-                return failed_info
-        except Exception as e:
-            # 例外が発生した場合の失敗情報
-            failed_info = {
-                'file': file_path,
-                'retry_count': retry_count + 1,
-                'success': False,
-                'last_error': str(e),
-                'last_attempt': time.strftime('%Y-%m-%d %H:%M:%S'),
-                'idx': idx
-            }
-            return failed_info
-    
-    # 効率的なワーカー数を決定（CPUコア数と設定値の小さい方）
-    workers = min(MAX_WORKERS, os.cpu_count() or 4)
-    logger.info(f"並列アップロードを開始します（ワーカー数: {workers}）")
-    
-    # ファイルアップロードを並列実行
-    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-        # すべてのファイルについてアップロードタスクを送信
-        future_to_file = {executor.submit(parallel_upload_task, file, idx): (file, idx) 
-                         for idx, file in enumerate(all_files, start=1)}
-        
-        # 完了したタスクを処理
-        for future in concurrent.futures.as_completed(future_to_file):
-            file, idx = future_to_file[future]
-            try:
-                result = future.result()
-                upload_results.append(result)
-                
-                # 進捗を更新
-                success_count = len([r for r in upload_results if r.get('success', False)])
-                failed_count = len(upload_results) - success_count
-                update_progress(success_count, failed_count, len(upload_results))
-                
-                if result.get('success', False):
-                    logger.info(f"ファイルアップロード成功 ({len(upload_results)}/{len(all_files)}): {file}")
-                else:
-                    logger.warning(f"ファイルアップロード失敗 ({len(upload_results)}/{len(all_files)}): {file}")
-                    failed_files_dict[file] = {
-                        'retry_count': result.get('retry_count', 1),
-                        'last_error': result.get('last_error', '不明なエラー'),
-                        'last_attempt': result.get('last_attempt', time.strftime('%Y-%m-%d %H:%M:%S'))
-                    }
-            except Exception as e:
-                logger.error(f"タスク処理中にエラーが発生: {e}")
-                upload_results.append({
-                    'file': file,
-                    'success': False,
-                    'last_error': str(e),
-                    'idx': idx
-                })
-    
-    # 成功したファイルとトークンを抽出
-    successful_uploads = [r for r in upload_results if r.get('success', False)]
-    
-    # ステップ2: バッチでメディアアイテムを作成
-    if successful_uploads:
-        logger.info(f"{len(successful_uploads)}個のファイルが正常にアップロードされました。メディアアイテム作成を開始します。")
-        
-        # バッチサイズごとに処理
-        for i in range(0, len(successful_uploads), MAX_BATCH_SIZE):
-            batch = successful_uploads[i:i + MAX_BATCH_SIZE]
-            tokens = [item['token'] for item in batch]
-            files = [item['file'] for item in batch]
-            
-            logger.info(f"バッチ作成開始: {i+1}〜{i+len(batch)}/{len(successful_uploads)}")
-            
-            # バッチ作成実行
-            batch_result = batch_create_media_items(tokens, album_name, verbose)
-            
-            # 成功したファイルと失敗したファイルを処理
-            success_indices = batch_result.get('success', [])
-            failed_indices = batch_result.get('failed', [])
-            
-            # 成功したファイルをリストに追加
-            for idx, token in enumerate(tokens):
-                if token in success_indices:
-                    success_files.append(files[idx])
-                else:
-                    failed_files_dict[files[idx]] = {
-                        'retry_count': failed_files.get(files[idx], {}).get('retry_count', 0) + 1,
-                        'last_error': 'バッチ作成に失敗',
-                        'last_attempt': time.strftime('%Y-%m-%d %H:%M:%S')
-                    }
-            
-            # 進捗を更新
-            update_progress(len(success_files), len(failed_files_dict), len(upload_results))
-    else:
-        logger.warning("成功したファイルアップロードがありません。メディアアイテム作成はスキップします。")
-    
-    # 成功したファイルをアップロード済みリストに追加
-    with open(uploaded_log, 'a', encoding='utf-8') as f:
-        for file in success_files:
-            f.write(f"{file}\n")
-    
-    # 今回失敗したファイルを失敗リストに追加/更新
-    # 既存の失敗リストと今回の失敗リストをマージ
-    updated_failed_files = {**failed_files, **failed_files_dict}
-    
-    # 成功したファイルは失敗リストから削除
-    for file in success_files:
-        if file in updated_failed_files:
-            del updated_failed_files[file]
-    
-    # 失敗リストを保存
-    with open(failed_log, 'w', encoding='utf-8') as f:
-        json.dump(updated_failed_files, f, ensure_ascii=False, indent=2)
-    
-    logger.info(f"アップロード完了: 成功={len(success_files)}枚, 失敗={len(failed_files_dict)}枚")
-    
-    # 進捗ファイルを完了状態に更新
-    progress_data['completed'] = True
-    try:
         with open(progress_path, 'w', encoding='utf-8') as f:
-            json.dump(progress_data, f, ensure_ascii=False)
+            progress_data = {
+                "files": all_upload_files,
+                "total": len(all_upload_files),
+                "success": 0,
+                "failed": 0,
+                "completed": False,
+                "album_name": album_name or DEFAULT_ALBUM
+            }
+            json.dump(progress_data, f)
         
-        # アップロード完了後の進捗ファイルは保持し、Web UI の停止操作で削除します
-        logger.info("アップロード完了: 進捗ファイルを保持しました (Web 停止ボタンで削除されます)")
-    except Exception as e:
-        logger.debug(f"進捗ファイルの更新に失敗しました: {e}")
+        # スライドショーを開始（現在アップロード対象のファイルを表示）
+        show_uploaded_slideshow(
+            fullscreen=fullscreen,
+            recent=recent,
+            current_only=True,  # 現在アップロードする写真のみを表示
+            interval=interval,
+            random_order=random_order,
+            no_pending=no_pending,
+            verbose=verbose,
+            bgm_files=bgm_files,
+        )
     
-    return len(success_files) > 0
+    # 3. 写真のアップロード処理
+    success = core_upload_photos(Path(dcim_path), album_name=album_name, verbose=verbose)
+    return success
 
 def show_uploaded_slideshow(fullscreen=True, recent=True, current_only=False, interval=5, random_order=False, 
                            no_pending=False, verbose=False, bgm_files=None):
@@ -615,19 +438,21 @@ class SDCardHandler(FileSystemEventHandler):
             
         if sd_path and (sd_path / DCIM_PATH).exists():
             logger.info(f"SDカード検出: {sd_path}")
-            success = upload_photos(sd_path / DCIM_PATH, self.album_name, self.show_slideshow, 
-                         self.fullscreen, self.recent, self.current_only,
-                         self.interval, self.random_order, self.no_pending, 
-                         self.verbose, self.bgm_files)
+            # 順序に沿って処理：写真特定 → スライドショー表示 → アップロード開始
+            success = upload_photos(
+                sd_path / DCIM_PATH, 
+                self.album_name, 
+                self.show_slideshow,  # スライドショー表示を有効に
+                self.fullscreen, 
+                self.recent, 
+                self.current_only,
+                self.interval, 
+                self.random_order, 
+                self.no_pending, 
+                self.verbose, 
+                self.bgm_files
+            )
             self.last_processed = current_time
-            
-            # アップロードが成功しない場合でもスライドショーだけ表示
-            if not success and self.show_slideshow:
-                logger.info("アップロードする写真はありませんでしたが、スライドショーを表示します")
-                show_uploaded_slideshow(fullscreen=self.fullscreen, recent=self.recent, 
-                                     current_only=self.current_only, interval=self.interval,
-                                     random_order=self.random_order, no_pending=self.no_pending,
-                                     verbose=self.verbose, bgm_files=self.bgm_files)
     
     def _delayed_volume_check(self):
         """
@@ -652,21 +477,21 @@ class SDCardHandler(FileSystemEventHandler):
                         logger.info(f"対象のボリュームを発見: {volume}")
                         if (volume / DCIM_PATH).exists():
                             logger.info(f"SDカード検出: {volume}")
-                            # アップロード実行
-                            success = upload_photos(volume / DCIM_PATH, self.album_name, self.show_slideshow,
-                                                  self.fullscreen, self.recent, self.current_only,
-                                                  self.interval, self.random_order, self.no_pending, 
-                                                  self.verbose, self.bgm_files)
+                            # 順序に沿って処理：写真特定 → スライドショー表示 → アップロード開始
+                            success = upload_photos(
+                                volume / DCIM_PATH, 
+                                self.album_name, 
+                                self.show_slideshow,  # スライドショー表示を有効に
+                                self.fullscreen, 
+                                self.recent, 
+                                self.current_only,
+                                self.interval, 
+                                self.random_order, 
+                                self.no_pending, 
+                                self.verbose, 
+                                self.bgm_files
+                            )
                             self.last_processed = time.time()
-                            
-                            # アップロードが成功しない場合でもスライドショーだけ表示
-                            if not success and self.show_slideshow:
-                                logger.info("アップロードする写真はありませんでしたが、スライドショーを表示します")
-                                show_uploaded_slideshow(fullscreen=self.fullscreen, recent=not (not self.recent), 
-                                                     current_only=self.current_only, interval=self.interval,
-                                                     random_order=self.random_order, no_pending=self.no_pending,
-                                                     verbose=self.verbose, bgm_files=self.bgm_files)
-                                
                             break
                         else:
                             logger.info(f"ボリュームは見つかりましたが、DCIMフォルダがありません: {volume}")
@@ -696,16 +521,20 @@ def check_periodically(interval=10, album_name=None, show_slideshow=False, fulls
         sd_path = find_sd_card()
         if sd_path and (sd_path / DCIM_PATH).exists():
             logger.info(f"SDカード検出: {sd_path}")
-            success = upload_photos(sd_path / DCIM_PATH, album_name, show_slideshow, fullscreen, recent, current_only,
-                        slideshow_interval, random_order, no_pending, verbose, bgm_files)
-            
-            # アップロードが成功しない場合でもスライドショーだけ表示
-            if not success and show_slideshow:
-                logger.info("アップロードする写真はありませんでしたが、スライドショーを表示します")
-                show_uploaded_slideshow(fullscreen=fullscreen, recent=recent, 
-                                     current_only=current_only, interval=slideshow_interval,
-                                     random_order=random_order, no_pending=no_pending,
-                                     verbose=verbose, bgm_files=bgm_files)
+            # 順序に沿って処理：写真特定 → スライドショー表示 → アップロード開始
+            success = upload_photos(
+                sd_path / DCIM_PATH, 
+                album_name, 
+                show_slideshow,  # スライドショー表示を有効に
+                fullscreen, 
+                recent, 
+                current_only,
+                slideshow_interval, 
+                random_order, 
+                no_pending, 
+                verbose,
+                bgm_files
+            )
         else:
             logger.info("SDカードが見つかりません")
         
@@ -731,6 +560,11 @@ def main():
     parser.add_argument('--bgm', nargs='*', help='BGMとして再生する音楽ファイルまたはディレクトリ（複数指定可）')
     args = parser.parse_args()
     
+    # 詳細ログモードが指定された場合は DEBUG レベルに変更
+    if args.verbose:
+        # ルートロガーも含めて DEBUG に変更
+        logging.getLogger().setLevel(logging.DEBUG)
+
     # フルスクリーンモードとrecentモードの設定
     fullscreen = not args.no_fullscreen
     recent = not args.all_photos
@@ -739,15 +573,21 @@ def main():
     sd_path = find_sd_card()
     if sd_path and (sd_path / DCIM_PATH).exists():
         logger.info(f"SDカード検出: {sd_path}")
-        success = upload_photos(sd_path / DCIM_PATH, args.album, args.slideshow, fullscreen, recent, args.current_only,
-                    args.slideshow_interval, args.random, args.no_pending, args.verbose, args.bgm, args.all_photos)
-        
-        # アップロードが成功しない場合でも、スライドショーが指定されていれば表示する
-        if not success and args.slideshow:
-            logger.info("アップロードする写真はありませんでしたが、スライドショーを表示します")
-            show_uploaded_slideshow(fullscreen=fullscreen, recent=not args.all_photos, current_only=args.current_only,
-                                 interval=args.slideshow_interval, random_order=args.random, 
-                                 no_pending=args.no_pending, verbose=args.verbose, bgm_files=args.bgm)
+        # 順序に沿って処理：写真特定 → スライドショー表示 → アップロード開始
+        upload_photos(
+            sd_path / DCIM_PATH, 
+            args.album, 
+            args.slideshow,
+            fullscreen, 
+            recent, 
+            args.current_only,
+            args.slideshow_interval, 
+            args.random, 
+            args.no_pending, 
+            args.verbose, 
+            args.bgm, 
+            args.all_photos
+        )
     
     # 監視モードが有効な場合
     if args.watch:

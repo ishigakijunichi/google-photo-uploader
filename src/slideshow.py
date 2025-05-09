@@ -12,10 +12,13 @@ import tkinter as tk
 from tkinter import ttk
 from PIL import Image, ImageTk, ExifTags
 from datetime import datetime, timedelta
+# 共通メディアユーティリティ
+from google_photos_uploader.utils.media import BackgroundMusicPlayer, AUDIO_EXTENSIONS, VideoPlayer
 import cv2
 import threading
 import queue
 import pygame
+from google_photos_uploader.ui.base_slideshow import BaseSlideshowApp  # 追加
 
 # ロギングの設定
 logging.basicConfig(
@@ -28,175 +31,30 @@ logger = logging.getLogger(__name__)
 # 動画ファイルの拡張子
 VIDEO_EXTENSIONS = {'.mp4', '.mov', '.avi', '.wmv', '.mkv'}
 
-# 音楽ファイルの拡張子
-AUDIO_EXTENSIONS = {'.mp3', '.wav', '.ogg', '.flac', '.aac', '.m4a'}
+# --------------------------------------------------
+# スライドショー本体
+# --------------------------------------------------
 
-class VideoPlayer:
-    """動画再生を管理するクラス"""
-    def __init__(self, video_path, label, interval):
-        self.video_path = video_path
-        self.label = label
-        self.interval = interval
-        self.cap = None
-        self.playing = False
-        self.frame_queue = queue.Queue(maxsize=30)
-        self.stop_event = threading.Event()
-        self.thread = None
-
-    def start(self):
-        """動画再生を開始"""
-        self.cap = cv2.VideoCapture(self.video_path)
-        if not self.cap.isOpened():
-            logger.error(f"動画を開けません: {self.video_path}")
-            return False
-
-        self.playing = True
-        self.stop_event.clear()
-        self.thread = threading.Thread(target=self._update_frame)
-        self.thread.daemon = True
-        self.thread.start()
-        return True
-
-    def stop(self):
-        """動画再生を停止"""
-        self.playing = False
-        self.stop_event.set()
-        if self.thread:
-            self.thread.join()
-        if self.cap:
-            self.cap.release()
-        self.cap = None
-
-    def _update_frame(self):
-        """フレームを更新"""
-        while not self.stop_event.is_set():
-            ret, frame = self.cap.read()
-            if not ret:
-                # 動画の終わりに達したら最初に戻る
-                self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                continue
-
-            # BGRからRGBに変換
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            
-            # フレームをリサイズ
-            height, width = frame.shape[:2]
-            screen_width = self.label.winfo_width()
-            screen_height = self.label.winfo_height()
-            
-            if screen_width > 0 and screen_height > 0:
-                # アスペクト比を維持してリサイズ
-                aspect_ratio = width / height
-                if width > screen_width:
-                    width = screen_width
-                    height = int(width / aspect_ratio)
-                if height > screen_height:
-                    height = screen_height
-                    width = int(height * aspect_ratio)
-                
-                frame = cv2.resize(frame, (width, height))
-
-            # PILイメージに変換
-            image = Image.fromarray(frame)
-            photo = ImageTk.PhotoImage(image=image)
-            
-            # フレームをキューに追加
-            try:
-                self.frame_queue.put(photo, block=False)
-            except queue.Full:
-                pass
-
-            # フレームレートに合わせて待機
-            time.sleep(1/30)  # 30fps
-
-    def update_display(self):
-        """表示を更新"""
-        if not self.playing:
-            return
-
-        try:
-            # キューから最新のフレームを取得
-            photo = self.frame_queue.get_nowait()
-            self.label.configure(image=photo)
-            self.label.image = photo  # 参照を保持
-        except queue.Empty:
-            pass
-
-class BackgroundMusicPlayer:
-    """BGM 再生を管理するクラス"""
-    def __init__(self, music_files, volume=0.5):
-        self.music_files = [p for p in music_files if Path(p).suffix.lower() in AUDIO_EXTENSIONS and os.path.exists(p)]
-        self.volume = volume
-        self.current_index = 0
-        self.enabled = bool(self.music_files)
-        if not self.enabled:
-            logger.info("BGM ファイルが見つからないため BGM は再生しません")
-            return
-        try:
-            pygame.mixer.init()
-            pygame.mixer.music.set_volume(self.volume)
-            self.play_current()
-        except Exception as e:
-            logger.error(f"pygame.mixer の初期化に失敗しました: {e}")
-            self.enabled = False
-
-    def play_current(self):
-        if not self.enabled:
-            return
-        path = self.music_files[self.current_index]
-        try:
-            pygame.mixer.music.load(path)
-            pygame.mixer.music.play()
-            logger.debug(f"BGM 再生開始: {path}")
-        except Exception as e:
-            logger.error(f"BGM 再生中にエラーが発生しました: {e}")
-
-    def update(self):
-        """曲が終了したかをチェックし、次の曲を再生"""
-        if not self.enabled:
-            return
-        if not pygame.mixer.music.get_busy():
-            # 次の曲へ
-            self.current_index = (self.current_index + 1) % len(self.music_files)
-            self.play_current()
-
-    def pause(self):
-        if self.enabled:
-            pygame.mixer.music.pause()
-
-    def resume(self):
-        if self.enabled:
-            pygame.mixer.music.unpause()
-
-    def stop(self):
-        if self.enabled:
-            pygame.mixer.music.stop()
-            pygame.mixer.quit()
-
-class SlideshowApp:
+class SlideshowApp(BaseSlideshowApp):
     """
     アップロード済み写真と動画を使ってスライドショーを表示するアプリケーション
     """
     def __init__(self, root, image_files, interval=5, random_order=False, fullscreen=False, bgm_files=None):
+        # Base クラス初期化
+        super().__init__(root,
+                         interval=interval,
+                         random_order=random_order,
+                         fullscreen=fullscreen,
+                         bgm_files=bgm_files)
+
         self.root = root
         self.image_files = image_files
-        self.interval = interval * 1000  # ミリ秒に変換
-        self.random_order = random_order
         self.current_index = 0
         self.images = []  # 画像のキャッシュ
         self.video_player = None  # 動画プレーヤー
-        # BGM プレーヤー
-        self.music_player = BackgroundMusicPlayer(bgm_files or [])
         
-        # ウィンドウの設定
+        # ウィンドウタイトル
         self.root.title("Google Photos Uploader - スライドショー")
-        self.root.configure(bg="black")
-        
-        # フルスクリーンモード
-        if fullscreen:
-            self.root.attributes("-fullscreen", True)
-            self.root.bind("<Escape>", lambda e: self.root.destroy())  # ESCキーで終了
-            self.root.bind("<q>", lambda e: self.root.destroy())  # qキーで終了
         
         # 画像表示用のラベル
         self.image_label = tk.Label(root, bg="black")
@@ -206,18 +64,6 @@ class SlideshowApp:
         self.status_label = tk.Label(root, text="", bg="black", fg="white", font=("Helvetica", 14), anchor="sw")
         # place を用いて下部に重ねる
         self.status_label.place(relx=0.01, rely=0.97, anchor="sw")
-        
-        # マウスクリックで次の画像
-        self.root.bind("<Button-1>", self.next_file)
-        
-        # キーボードショートカット
-        self.root.bind("<Right>", self.next_file)  # 右矢印キー
-        self.root.bind("<Left>", self.prev_file)   # 左矢印キー
-        self.root.bind("<space>", self.toggle_play)  # スペースキー
-        
-        # 再生/一時停止状態
-        self.playing = True
-        self.after_id = None
         
         # 表示するファイルがあるか確認
         if not self.image_files:
@@ -418,6 +264,19 @@ class SlideshowApp:
         if self.music_player and self.music_player.enabled:
             self.music_player.update()
         self.root.after(1000, self.update_music)
+
+    # ------------------------------------------------------------------
+    # BaseSlideshowApp 互換メソッド
+    # ------------------------------------------------------------------
+
+    def next_item(self, event=None):
+        self.next_file(event)
+
+    def prev_item(self, event=None):
+        self.prev_file(event)
+
+    def schedule_next_item(self):
+        self.schedule_next_file()
 
 def find_pending_upload_files():
     """アップロード予定のファイルを探す"""

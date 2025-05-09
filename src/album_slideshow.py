@@ -20,6 +20,7 @@ import pygame
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
+from google_photos_uploader.utils.media import BackgroundMusicPlayer, AUDIO_EXTENSIONS
 
 # ロギングの設定
 logging.basicConfig(
@@ -177,67 +178,6 @@ def download_media_item(media_item, size='2048'):
     except Exception as e:
         logger.error(f"画像の変換中にエラーが発生しました: {e}")
         return None
-
-class BackgroundMusicPlayer:
-    """BGM 再生を管理するクラス"""
-    def __init__(self, music_files=None, volume=0.5):
-        # BGMフォルダから音楽ファイルを取得
-        if music_files is None:
-            bgm_dir = Path(__file__).parent.parent / 'bgm'
-            if bgm_dir.exists():
-                music_files = list(bgm_dir.glob('*.mp3')) + list(bgm_dir.glob('*.wav'))
-            else:
-                music_files = []
-        
-        self.music_files = [str(p) for p in music_files if os.path.exists(str(p))]
-        self.volume = volume
-        self.current_index = 0
-        self.enabled = bool(self.music_files)
-        
-        if not self.enabled:
-            logger.info("BGM ファイルが見つからないため BGM は再生しません")
-            return
-            
-        try:
-            pygame.mixer.init()
-            pygame.mixer.music.set_volume(self.volume)
-            self.play_current()
-        except Exception as e:
-            logger.error(f"pygame.mixer の初期化に失敗しました: {e}")
-            self.enabled = False
-
-    def play_current(self):
-        if not self.enabled:
-            return
-        path = self.music_files[self.current_index]
-        try:
-            pygame.mixer.music.load(path)
-            pygame.mixer.music.play()
-            logger.debug(f"BGM 再生開始: {path}")
-        except Exception as e:
-            logger.error(f"BGM 再生中にエラーが発生しました: {e}")
-
-    def update(self):
-        """曲が終了したかをチェックし、次の曲を再生"""
-        if not self.enabled:
-            return
-        if not pygame.mixer.music.get_busy():
-            # 次の曲へ
-            self.current_index = (self.current_index + 1) % len(self.music_files)
-            self.play_current()
-
-    def pause(self):
-        if self.enabled:
-            pygame.mixer.music.pause()
-
-    def resume(self):
-        if self.enabled:
-            pygame.mixer.music.unpause()
-
-    def stop(self):
-        if self.enabled:
-            pygame.mixer.music.stop()
-            pygame.mixer.quit()
 
 class AlbumSlideshowApp:
     """
