@@ -36,6 +36,7 @@ class BaseSlideshowApp:
         random_order: bool = False,
         fullscreen: bool = False,
         bgm_files: Optional[List[str]] = None,
+        random_bgm: bool = False,
     ) -> None:
         # tk root
         self.root = root
@@ -48,7 +49,7 @@ class BaseSlideshowApp:
         self.after_id: Optional[str] = None
 
         # BGM
-        self.music_player = BackgroundMusicPlayer(bgm_files or [])
+        self.music_player = BackgroundMusicPlayer(bgm_files, random_order=random_bgm)
 
         # ウィンドウ設定
         self.root.configure(bg="black")

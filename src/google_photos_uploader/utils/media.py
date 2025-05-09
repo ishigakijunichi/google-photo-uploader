@@ -9,6 +9,7 @@ import threading
 import queue
 import time
 from tkinter import Label
+import random
 
 logger = logging.getLogger(__name__)
 
@@ -19,13 +20,38 @@ AUDIO_EXTENSIONS = {
 class BackgroundMusicPlayer:
     """BGM 再生を管理する共通クラス"""
 
-    def __init__(self, music_files: List[str] | None = None, volume: float = 0.5):
-        # music_files が None の場合はプロジェクト直下 bgm フォルダから探索
-        if music_files is None:
-            bgm_dir = Path(__file__).resolve().parent.parent.parent / 'bgm'
+    def __init__(self, music_files: List[str] | None = None, volume: float = 0.5, random_order: bool = False):
+        # music_files が None または空リストの場合はプロジェクト直下 bgm フォルダから探索
+        if not music_files:
+            # 現在のファイルの場所から正しいプロジェクトルートパスを取得
+            # src/google_photos_uploader/utils/media.py から3階層上がプロジェクトルート
+            bgm_dir = Path(__file__).resolve().parent.parent.parent.parent / 'bgm'
+            
+            # もし見つからない場合は、別の場所も探索
+            if not bgm_dir.exists():
+                # プロジェクトルートの可能性がある場所を探す
+                possible_root_dirs = [
+                    Path(__file__).resolve().parent.parent.parent.parent,  # 4階層上
+                    Path(__file__).resolve().parent.parent.parent,  # 3階層上 
+                    Path.home() / 'Projects' / 'google_photos_uploader'  # ホームディレクトリの特定パス
+                ]
+                
+                for possible_root in possible_root_dirs:
+                    possible_bgm_dir = possible_root / 'bgm'
+                    if possible_bgm_dir.exists():
+                        bgm_dir = possible_bgm_dir
+                        logger.info(f"BGMフォルダを発見しました: {bgm_dir}")
+                        break
+            
             if bgm_dir.exists():
-                music_files = [str(p) for p in bgm_dir.glob('*.mp3')] + [str(p) for p in bgm_dir.glob('*.wav')]
+                music_files = []
+                # サポートされている拡張子のファイルを探す
+                for ext in AUDIO_EXTENSIONS:
+                    music_files.extend([str(p) for p in bgm_dir.glob(f'*{ext}')])
+                if music_files:
+                    logger.info(f"BGMフォルダから{len(music_files)}個の音楽ファイルを読み込みました: {bgm_dir}")
             else:
+                logger.warning(f"BGMフォルダが見つかりません: 試行パス = {bgm_dir}")
                 music_files = []
 
         # 対応拡張子 & 実在ファイルをフィルタ
@@ -33,6 +59,7 @@ class BackgroundMusicPlayer:
         self.volume = volume
         self.current_index = 0
         self.enabled = bool(self.music_files)
+        self.random_order = random_order
 
         if not self.enabled:
             logger.info("BGM ファイルが見つからないため BGM は再生しません")
@@ -66,7 +93,13 @@ class BackgroundMusicPlayer:
         if not self.enabled:
             return
         if not pygame.mixer.music.get_busy():
-            self.current_index = (self.current_index + 1) % len(self.music_files)
+            if self.random_order:
+                # ランダムに次の曲を選択（現在の曲以外）
+                available_indices = [i for i in range(len(self.music_files)) if i != self.current_index]
+                if available_indices:
+                    self.current_index = random.choice(available_indices)
+            else:
+                self.current_index = (self.current_index + 1) % len(self.music_files)
             self.play_current()
 
     def pause(self):

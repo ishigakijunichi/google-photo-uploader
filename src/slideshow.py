@@ -39,13 +39,14 @@ class SlideshowApp(BaseSlideshowApp):
     """
     アップロード済み写真と動画を使ってスライドショーを表示するアプリケーション
     """
-    def __init__(self, root, image_files, interval=5, random_order=False, fullscreen=False, bgm_files=None):
+    def __init__(self, root, image_files, interval=5, random_order=False, fullscreen=False, bgm_files=None, random_bgm=False):
         # Base クラス初期化
         super().__init__(root,
                          interval=interval,
                          random_order=random_order,
                          fullscreen=fullscreen,
-                         bgm_files=bgm_files)
+                         # 空リストは None と同等扱いで自動探索を有効化
+                         bgm_files=(bgm_files if bgm_files else None))
 
         self.root = root
         self.image_files = image_files
@@ -415,6 +416,7 @@ def main():
     parser.add_argument('--current', action='store_true', help='現在アップロード中の写真のみ表示する')
     parser.add_argument('--no-pending', action='store_true', help='アップロード予定/失敗ファイルを含めない')
     parser.add_argument('--bgm', nargs='*', help='BGMとして再生する音楽ファイルまたはディレクトリ（複数指定可）')
+    parser.add_argument('--random-bgm', action='store_true', help='BGMをランダムに再生する')
     args = parser.parse_args()
     
     # 詳細ログモードが指定された場合
@@ -460,7 +462,8 @@ def main():
         interval=args.interval,
         random_order=args.random,
         fullscreen=args.fullscreen,
-        bgm_files=bgm_files
+        bgm_files=bgm_files,
+        random_bgm=args.random_bgm
     )
     
     # イベントループの開始

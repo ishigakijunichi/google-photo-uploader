@@ -185,14 +185,25 @@ def batch_create_media_items(upload_tokens, album_name=None, verbose=False):
             tokens_file.unlink()
 
 def upload_photos(dcim_path, album_name=None, show_slideshow=False, fullscreen=True, recent=True, current_only=False,
-                 interval=5, random_order=False, no_pending=False, verbose=False, bgm_files=None, all_photos=False):
+                 interval=5, random_order=False, no_pending=False, verbose=False, bgm_files=None, all_photos=False,
+                 random_bgm=False):
     """
-    写真のアップロード処理と必要に応じてスライドショーを表示
-    
-    処理順序:
-    1. アップロードする写真を特定（ここではまだアップロードしない）
-    2. スライドショーを表示（指定がある場合）
-    3. アップロード処理
+    SDカードから写真をアップロードする
+
+    Args:
+        dcim_path (str): DCIMディレクトリのパス
+        album_name (str, optional): アップロード先のアルバム名
+        show_slideshow (bool, optional): スライドショーを表示するかどうか
+        fullscreen (bool, optional): フルスクリーンモードで表示するかどうか
+        recent (bool, optional): 最近アップロードした写真のみ表示するかどうか
+        current_only (bool, optional): 現在アップロード中の写真のみ表示するかどうか
+        interval (int, optional): 画像の表示間隔（秒）
+        random_order (bool, optional): ランダム順で表示するかどうか
+        no_pending (bool, optional): アップロード予定/失敗ファイルを含めないかどうか
+        verbose (bool, optional): 詳細なログを出力するかどうか
+        bgm_files (list, optional): BGMとして再生する音楽ファイルまたはディレクトリのリスト
+        all_photos (bool, optional): すべての写真をスライドショーに表示するかどうか
+        random_bgm (bool, optional): BGMをランダムに再生するかどうか
     """
     from google_photos_uploader.uploader import _collect_media_files, _load_logs
     
@@ -233,6 +244,7 @@ def upload_photos(dcim_path, album_name=None, show_slideshow=False, fullscreen=T
                 no_pending=no_pending,
                 verbose=verbose,
                 bgm_files=bgm_files,
+                random_bgm=random_bgm
             )
         return False
     
@@ -287,6 +299,7 @@ def upload_photos(dcim_path, album_name=None, show_slideshow=False, fullscreen=T
                 no_pending=no_pending,
                 verbose=verbose,
                 bgm_files=bgm_files,
+                random_bgm=random_bgm
             )
         return False
     
@@ -317,6 +330,7 @@ def upload_photos(dcim_path, album_name=None, show_slideshow=False, fullscreen=T
             no_pending=no_pending,
             verbose=verbose,
             bgm_files=bgm_files,
+            random_bgm=random_bgm
         )
     
     # 3. 写真のアップロード処理
@@ -324,7 +338,7 @@ def upload_photos(dcim_path, album_name=None, show_slideshow=False, fullscreen=T
     return success
 
 def show_uploaded_slideshow(fullscreen=True, recent=True, current_only=False, interval=5, random_order=False, 
-                           no_pending=False, verbose=False, bgm_files=None):
+                           no_pending=False, verbose=False, bgm_files=None, random_bgm=False):
     """
     アップロードした写真のスライドショーを表示
     
@@ -337,6 +351,7 @@ def show_uploaded_slideshow(fullscreen=True, recent=True, current_only=False, in
         no_pending (bool): アップロード予定/失敗ファイルを含めないかどうか
         verbose (bool): 詳細なログを出力するかどうか
         bgm_files (list): BGMとして再生する音楽ファイルまたはディレクトリのリスト
+        random_bgm (bool): BGMをランダムに再生するかどうか
     """
     slideshow_script = Path(__file__).parent / "slideshow.py"
     
@@ -360,6 +375,8 @@ def show_uploaded_slideshow(fullscreen=True, recent=True, current_only=False, in
         command.append("--no-pending")
     if verbose:
         command.append("--verbose")
+    if random_bgm:
+        command.append("--random-bgm")
     
     # BGMファイルがある場合
     if bgm_files:
@@ -542,7 +559,7 @@ class SDCardHandler(FileSystemEventHandler):
 
 def check_periodically(interval=10, album_name=None, show_slideshow=False, fullscreen=True, recent=True, 
                      current_only=False, slideshow_interval=5, random_order=False, no_pending=False, 
-                     verbose=False, bgm_files=None):
+                     verbose=False, bgm_files=None, random_bgm=False):
     """
     一定間隔でSDカードの存在をチェックし、見つかった場合は写真をアップロード
     
@@ -558,6 +575,7 @@ def check_periodically(interval=10, album_name=None, show_slideshow=False, fulls
         no_pending (bool): アップロード予定/失敗ファイルを含めないかどうか
         verbose (bool): 詳細なログを出力するかどうか
         bgm_files (list): BGMとして再生する音楽ファイルまたはディレクトリのリスト
+        random_bgm (bool): BGMをランダムに再生するかどうか
     """
     while True:
         sd_path = find_sd_card()
@@ -575,7 +593,8 @@ def check_periodically(interval=10, album_name=None, show_slideshow=False, fulls
                 random_order, 
                 no_pending, 
                 verbose,
-                bgm_files
+                bgm_files,
+                random_bgm=random_bgm
             )
         else:
             logger.info("SDカードが見つかりません")
@@ -600,6 +619,7 @@ def main():
     parser.add_argument('--no-pending', action='store_true', help='アップロード予定/失敗ファイルを含めない')
     parser.add_argument('--verbose', action='store_true', help='詳細なログを出力する')
     parser.add_argument('--bgm', nargs='*', help='BGMとして再生する音楽ファイルまたはディレクトリ（複数指定可）')
+    parser.add_argument('--random-bgm', action='store_true', help='BGMをランダムに再生する')
     args = parser.parse_args()
     
     # 詳細ログモードが指定された場合は DEBUG レベルに変更
@@ -628,7 +648,8 @@ def main():
             args.no_pending, 
             args.verbose, 
             args.bgm, 
-            args.all_photos
+            args.all_photos,
+            args.random_bgm
         )
     
     # 監視モードが有効な場合
@@ -648,7 +669,7 @@ def main():
         else:
             logger.info("このプラットフォームでは監視モードがサポートされていません。ポーリングモードに切り替えます。")
             check_periodically(args.interval, args.album, args.slideshow, fullscreen, recent, args.current_only,
-                             args.slideshow_interval, args.random, args.no_pending, args.verbose, args.bgm)
+                             args.slideshow_interval, args.random, args.no_pending, args.verbose, args.bgm, args.random_bgm)
             return
         
         # 設定を適用したSDカードハンドラを作成
@@ -683,7 +704,7 @@ def main():
         # ポーリングモード
         logger.info(f"{args.interval}秒間隔でSDカードをチェックしています...")
         check_periodically(args.interval, args.album, args.slideshow, fullscreen, recent, args.current_only,
-                         args.slideshow_interval, args.random, args.no_pending, args.verbose, args.bgm)
+                         args.slideshow_interval, args.random, args.no_pending, args.verbose, args.bgm, args.random_bgm)
 
 if __name__ == "__main__":
     main() 
