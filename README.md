@@ -1,6 +1,8 @@
 # Google Photos Uploader
 
 SD カードの写真を Google Photos にアップロードしながら、スライドショーで表示するツールです。
+TV などのディスプレイに接続した Raspberry Pi での動作を前提にしています。\*Rasberry Pi 5 で動作確認済み
+写真が格納されたフォルダ名が**DCIM**であることを前提にしています。
 
 ## 主な機能
 
@@ -21,12 +23,6 @@ SD カードが挿入されると自動的に写真を検出し、Google Photos 
 - 認証情報: `~/.google_photos_uploader/token.json`
 - アップロードされた写真のサムネイル: `~/.google_photos_uploader/thumbnails/`
 - アップロード状態のログ: `~/.google_photos_uploader/upload_logs/`
-
-#### 使用方法
-
-```
-python src/auto_uploader.py --watch --album "カメラアップロード"
-```
 
 ### 2. スライドショー機能
 

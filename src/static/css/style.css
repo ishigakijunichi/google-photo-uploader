@@ -17,7 +17,11 @@ body {
   margin: 0 auto;
   padding: 20px;
 }
-
+.section {
+  margin-top: 20px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid #ddd;
+}
 h1 {
   text-align: center;
   margin-bottom: 30px;

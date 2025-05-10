@@ -183,7 +183,7 @@ class AlbumSlideshowApp:
     """
     Google Photosのアルバムからメディアを取得してスライドショーを表示するアプリケーション
     """
-    def __init__(self, root, media_items, album_title="不明なアルバム", interval=5, random_order=False, fullscreen=False, bgm_files=None):
+    def __init__(self, root, media_items, album_title="不明なアルバム", interval=5, random_order=False, fullscreen=False, bgm_files=None, random_bgm=False):
         self.root = root
         self.media_items = media_items
         self.album_title = album_title
@@ -193,7 +193,10 @@ class AlbumSlideshowApp:
         self.images_cache = {}  # 画像キャッシュ
         
         # BGM プレーヤー
-        self.music_player = BackgroundMusicPlayer(bgm_files)
+        if bgm_files is not None:
+            self.music_player = BackgroundMusicPlayer(bgm_files, random_order=random_bgm)
+        else:
+            self.music_player = None
         
         # ウィンドウの設定
         self.root.title(f"Google Photos Album - {album_title}")
@@ -419,11 +422,13 @@ class AlbumSlideshowApp:
         """再生/一時停止を切り替え"""
         self.playing = not self.playing
         if self.playing:
-            self.music_player.resume()
+            if self.music_player:
+                self.music_player.resume()
             self.schedule_next_image()
             self.update_status(f"再生中 - {self.current_index + 1}/{len(self.media_items)}")
         else:
-            self.music_player.pause()
+            if self.music_player:
+                self.music_player.pause()
             if self.after_id:
                 self.root.after_cancel(self.after_id)
                 self.after_id = None
@@ -437,8 +442,8 @@ class AlbumSlideshowApp:
             self.status_label.config(text=status_text)
 
     def update_music(self):
-        """BGM の再生状況を監視し次曲を再生"""
-        if self.music_player and self.music_player.enabled:
+        """BGMの更新"""
+        if self.music_player:
             self.music_player.update()
         self.root.after(1000, self.update_music)
 
@@ -512,6 +517,8 @@ def main():
     parser.add_argument('--random', action='store_true', help='ランダムな順序で表示')
     parser.add_argument('--fullscreen', action='store_true', help='フルスクリーンモードで表示')
     parser.add_argument('--verbose', action='store_true', help='詳細なログを出力')
+    parser.add_argument('--bgm', nargs='*', help='BGMとして再生する音楽ファイルまたはディレクトリ（複数指定可）')
+    parser.add_argument('--random-bgm', action='store_true', help='BGMをランダムに再生する')
     parser.add_argument('--exact-match', action='store_true', help='アルバム名を完全一致で検索')
     parser.add_argument('--list-albums-only', action='store_true', help='アルバムリストをJSON形式で出力して終了')
     args = parser.parse_args()
@@ -600,6 +607,30 @@ def main():
     
     logger.info(f"{len(media_items)}個のメディアアイテムが見つかりました")
     
+    # BGM ファイルの収集（指定があれば）
+    bgm_files = None
+    if args.bgm is not None:
+        # 引数が無い状態（--bgm のみ）の場合は空リストを渡して ~/bgm を探索
+        if len(args.bgm) == 0:
+            bgm_files = []
+        else:
+            def collect(paths):
+                files = []
+                for p in paths:
+                    if os.path.isdir(p):
+                        for dirpath, _, filenames in os.walk(p):
+                            for fn in filenames:
+                                if Path(fn).suffix.lower() in AUDIO_EXTENSIONS:
+                                    files.append(os.path.join(dirpath, fn))
+                    elif os.path.isfile(p):
+                        if Path(p).suffix.lower() in AUDIO_EXTENSIONS:
+                            files.append(p)
+                return files
+            bgm_files = collect(args.bgm)
+    else:
+        # BGM オプションが指定されていない場合は None（無効）
+        bgm_files = None
+    
     # スライドショーを表示
     root = tk.Tk()
     app = AlbumSlideshowApp(
@@ -608,7 +639,9 @@ def main():
         album_title=album_title,
         interval=args.interval, 
         random_order=args.random, 
-        fullscreen=args.fullscreen
+        fullscreen=args.fullscreen,
+        bgm_files=bgm_files,
+        random_bgm=args.random_bgm
     )
     
     # ウィンドウサイズを設定（フルスクリーンでない場合）

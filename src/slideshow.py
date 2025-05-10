@@ -46,8 +46,9 @@ class SlideshowApp(BaseSlideshowApp):
                          interval=interval,
                          random_order=random_order,
                          fullscreen=fullscreen,
-                         # 空リストは None と同等扱いで自動探索を有効化
-                         bgm_files=(bgm_files if bgm_files else None))
+                         # bgm_files が None の場合のみ自動探索を行う
+                         bgm_files=bgm_files,
+                         random_bgm=random_bgm)
 
         self.root = root
         self.image_files = image_files
@@ -469,21 +470,28 @@ def main():
     root = tk.Tk()
     
     # BGM ファイルの収集
-    bgm_files = []
-    if args.bgm:
-        def collect(paths):
-            files = []
-            for p in paths:
-                if os.path.isdir(p):
-                    for dirpath, _, filenames in os.walk(p):
-                        for fn in filenames:
-                            if Path(fn).suffix.lower() in AUDIO_EXTENSIONS:
-                                files.append(os.path.join(dirpath, fn))
-                elif os.path.isfile(p):
-                    if Path(p).suffix.lower() in AUDIO_EXTENSIONS:
-                        files.append(p)
-            return files
-        bgm_files = collect(args.bgm)
+    bgm_files = None
+    if args.bgm is not None:
+        # 引数なし（--bgm のみ）の場合は空リストを渡して ~/bgm を探索
+        if len(args.bgm) == 0:
+            bgm_files = []
+        else:
+            def collect(paths):
+                files = []
+                for p in paths:
+                    if os.path.isdir(p):
+                        for dirpath, _, filenames in os.walk(p):
+                            for fn in filenames:
+                                if Path(fn).suffix.lower() in AUDIO_EXTENSIONS:
+                                    files.append(os.path.join(dirpath, fn))
+                    elif os.path.isfile(p):
+                        if Path(p).suffix.lower() in AUDIO_EXTENSIONS:
+                            files.append(p)
+                return files
+            bgm_files = collect(args.bgm)
+    else:
+        # BGM オプションが指定されていない場合は None（無効）
+        bgm_files = None
 
     # アプリケーションの作成
     app = SlideshowApp(

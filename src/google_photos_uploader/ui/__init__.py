@@ -50,9 +50,10 @@ def launch_slideshow(
         command.append("--no-pending")
     if verbose:
         command.append("--verbose")
-    if bgm_files:
+    if bgm_files is not None:
         command.append("--bgm")
-        command.extend(bgm_files)
+        if len(bgm_files) > 0:
+            command.extend(bgm_files)
 
     try:
         logger.info("スライドショーを起動: %s", " ".join(command))

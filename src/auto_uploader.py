@@ -422,10 +422,12 @@ def show_uploaded_slideshow(fullscreen=True, recent=True, current_only=False, in
     if random_bgm:
         command.append("--random-bgm")
     
-    # BGMファイルがある場合
-    if bgm_files:
+    # BGM オプションが有効な場合
+    if bgm_files is not None:
         command.append("--bgm")
-        command.extend(bgm_files)
+        # 明示的にファイルやディレクトリが指定されていれば追加
+        if len(bgm_files) > 0:
+            command.extend(bgm_files)
     
     try:
         logger.info(f"スライドショーを開始します: {' '.join(command)}")
@@ -576,28 +578,24 @@ class SDCardHandler(FileSystemEventHandler):
             try:
                 for volume in volumes_dir.iterdir():
                     logger.debug(f"ボリュームをチェック: {volume}")
-                    if volume.is_dir() and volume.name in VOLUME_NAMES:
-                        logger.info(f"対象のボリュームを発見: {volume}")
-                        if (volume / DCIM_PATH).exists():
-                            logger.info(f"SDカード検出: {volume}")
-                            # 順序に沿って処理：写真特定 → スライドショー表示 → アップロード開始
-                            success = upload_photos(
-                                volume / DCIM_PATH, 
-                                self.album_name, 
-                                self.show_slideshow,  # スライドショー表示を有効に
-                                self.fullscreen, 
-                                self.recent, 
-                                self.current_only,
-                                self.interval, 
-                                self.random_order, 
-                                self.no_pending, 
-                                self.verbose, 
-                                self.bgm_files
-                            )
-                            self.last_processed = time.time()
-                            break
-                        else:
-                            logger.info(f"ボリュームは見つかりましたが、DCIMフォルダがありません: {volume}")
+                    if (volume / DCIM_PATH).exists():
+                        logger.info(f"DCIM フォルダを含むボリュームを発見: {volume}")
+                        # 順序に沿って処理：写真特定 → スライドショー表示 → アップロード開始
+                        success = upload_photos(
+                            volume / DCIM_PATH, 
+                            self.album_name, 
+                            self.show_slideshow,  # スライドショー表示を有効に
+                            self.fullscreen, 
+                            self.recent, 
+                            self.current_only,
+                            self.interval, 
+                            self.random_order, 
+                            self.no_pending, 
+                            self.verbose, 
+                            self.bgm_files
+                        )
+                        self.last_processed = time.time()
+                        break
             except Exception as e:
                 logger.error(f"ボリュームチェック中のエラー: {e}")
 
@@ -675,6 +673,8 @@ def main():
     fullscreen = not args.no_fullscreen
     recent = not args.all_photos
     
+    # --bgm オプションが指定されていない場合は BGM 無効
+
     # まず、現在接続されているSDカードをチェック
     sd_path = find_sd_card()
     if sd_path and (sd_path / DCIM_PATH).exists():

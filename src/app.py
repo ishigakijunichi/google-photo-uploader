@@ -9,6 +9,7 @@ import atexit
 import psutil
 import json
 import time
+from datetime import datetime
 
 # アプリケーションのルートディレクトリを設定
 APP_ROOT = Path(__file__).parent
@@ -25,6 +26,12 @@ LOG_FILE = CONFIG_DIR / 'app.log'
 UPLOADER_LOG = CONFIG_DIR / 'uploader.log'
 PROGRESS_FILE = CONFIG_DIR / 'upload_progress.json'
 CREDENTIALS_FILE = CONFIG_DIR / 'credentials.json'
+SETTINGS_FILE = CONFIG_DIR / 'settings.json'  # 設定ファイルのパスを追加
+
+# ---------------------------------------------
+# アップロード開始時刻を保存するためのグローバル変数
+# ---------------------------------------------
+UPLOAD_START_TIME: datetime | None = None
 
 # 必要なディレクトリとファイルを作成
 def setup_directories():
@@ -67,13 +74,46 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# --------------------------------------------------
+# プロセス停止ヘルパー
+# --------------------------------------------------
+
+def kill_slideshow_processes(force: bool = False):
+    """slideshow.py / album_slideshow.py を確実に停止するヘルパー
+
+    Raspberry Pi OS 環境で ``pkill`` がパターンマッチせず残存するケースが報告されたため、
+    psutil でプロセスリストを走査し、Cmdline に対象スクリプト名が含まれるものを
+    `SIGTERM`（または `SIGKILL`）で個別に終了させる。
+
+    Args:
+        force: True の場合は SIGKILL (-9) を送る。
+    """
+    try:
+        patterns = ["slideshow.py", "album_slideshow.py"]
+        sig = signal.SIGKILL if force else signal.SIGTERM
+
+        for proc in psutil.process_iter(["pid", "cmdline"]):
+            cmdline = " ".join(proc.info.get("cmdline") or [])
+            if any(p in cmdline for p in patterns):
+                try:
+                    logger.info(f"スライドショープロセス停止: PID={proc.pid} CMD='{cmdline}' (signal={sig})")
+                    os.kill(proc.pid, sig)
+                except ProcessLookupError:
+                    # 既に終了している
+                    continue
+                except Exception as e:
+                    logger.warning(f"PID {proc.pid} の終了に失敗しました: {e}")
+    except Exception as e:
+        logger.error(f"スライドショープロセス停止中にエラーが発生しました: {e}")
+
 def cleanup():
     """アプリケーション終了時に実行される関数"""
     try:
         # auto_uploader.pyのプロセスを停止
         subprocess.run(['pkill', '-f', 'python.*auto_uploader.py'], check=False)
-        # slideshow.pyのプロセスを停止
-        subprocess.run(['pkill', '-f', 'python.*slideshow.py'], check=False)
+        # slideshow 関連プロセスを停止（補完として pkill も用いる）
+        subprocess.run(['pkill', '-f', 'python.*(slideshow|album_slideshow).py'], check=False)
+        kill_slideshow_processes()
         logger.info('全プロセスを停止しました')
     except Exception as e:
         logger.error(f'プロセス停止中にエラーが発生しました: {e}')
@@ -112,6 +152,28 @@ def start_upload():
         random = data.get('random', False)
         no_pending = data.get('no_pending', False)
         verbose = data.get('verbose', False)
+        bgm = data.get('bgm', False)
+        
+        # 起動時間を記録
+        global UPLOAD_START_TIME
+        UPLOAD_START_TIME = datetime.now()
+        
+        # 設定を保存
+        settings = {
+            'album_name': album_name,
+            'watch': watch,
+            'interval': interval,
+            'slideshow': slideshow,
+            'fullscreen': fullscreen,
+            'all_photos': all_photos,
+            'current_only': current_only,
+            'slideshow_interval': slideshow_interval,
+            'random': random,
+            'no_pending': no_pending,
+            'verbose': verbose,
+            'bgm': bgm
+        }
+        save_settings(settings)
         
         # auto_uploader.pyのパスを取得
         uploader_script = Path(__file__).parent / "auto_uploader.py"
@@ -142,6 +204,8 @@ def start_upload():
             command.append('--no-pending')
         if verbose:
             command.append('--verbose')
+        if bgm:
+            command.append('--bgm')
         
         # バックグラウンドで実行
         subprocess.Popen(command)
@@ -156,7 +220,10 @@ def stop_upload():
     try:
         # 実行中のプロセスを終了
         os.system("pkill -f auto_uploader.py")
-        os.system("pkill -f slideshow.py")  # スライドショーのプロセスも停止
+        # slideshow 関連プロセスも確実に停止
+        pkill_status = os.system("pkill -f '(slideshow|album_slideshow)\.py'")
+        logger.debug(f'pkill result code: {pkill_status}')
+        kill_slideshow_processes()
         
         # 進捗ファイルを削除
         progress_path = Path.home() / '.google_photos_uploader' / 'upload_progress.json'
@@ -167,6 +234,10 @@ def stop_upload():
             except Exception as e:
                 logger.error(f"進捗ファイルの削除に失敗しました: {e}")
                 
+        # アップロード開始時刻をリセット
+        global UPLOAD_START_TIME
+        UPLOAD_START_TIME = None
+        
         return jsonify({'status': 'success', 'message': '停止しました'})
     except Exception as e:
         logger.error(f"エラーが発生しました: {e}")
@@ -175,36 +246,96 @@ def stop_upload():
 @app.route('/unmount_sd', methods=['POST'])
 def unmount_sd():
     try:
-        # プラットフォームに応じたアンマウントコマンドを実行
+        # ---------------------------------------------
+        # SD アンマウント前に関連プロセスを確実に停止
+        # ---------------------------------------------
+        logger.info("アンマウント前にスライドショー / アップローダーを停止します")
+
+        # 1) slideshow / album_slideshow
+        kill_slideshow_processes(force=False)
+
+        # 2) auto_uploader
+        os.system("pkill -f auto_uploader.py")
+
+        # 少し待機して確認
+        time.sleep(1)
+        if (is_process_running('slideshow.py') or is_process_running('album_slideshow.py')):
+            logger.warning("SIGTERM でスライドショーが終了しなかったため SIGKILL を送信")
+            kill_slideshow_processes(force=True)
+
+        if is_process_running('auto_uploader.py'):
+            logger.warning("SIGTERM で auto_uploader が終了しなかったため SIGKILL を送信")
+            os.system("pkill -9 -f auto_uploader.py")
+
+        # ---------------------------------------------
+        # ここから SD アンマウント処理本体
+        # ---------------------------------------------
+        message = ''  # アンマウント結果
+        # プラットフォームに応じたアンマウントロジック
         if platform.system() == 'Darwin':  # macOS
-            subprocess.run(['diskutil', 'unmount', '/Volumes/PHOTO_UPLOAD_SD'], check=True)
-            message = 'SDカードをアンマウントしました'
-        elif platform.system() == 'Linux':
-            # Linuxの場合、ユーザー名を取得
-            user = os.environ.get('USER', 'user')
-            mount_point = f'/media/{user}/PHOTO_UPLOAD_SD'
-            if not os.path.exists(mount_point):
-                mount_point = '/media/PHOTO_UPLOAD_SD'
-            subprocess.run(['umount', mount_point], check=True)
-            message = 'SDカードをアンマウントしました'
-        elif platform.system() == 'Windows':
-            # Windowsの場合は、ドライブレターを探してアンマウント
-            import win32api
-            drives = win32api.GetLogicalDriveStrings().split('\000')[:-1]
-            for drive in drives:
-                try:
-                    volume_name = win32api.GetVolumeInformation(drive)[0]
-                    if volume_name == 'PHOTO_UPLOAD_SD':
-                        subprocess.run(['eject', drive], check=True)
-                        message = 'SDカードをアンマウントしました'
-                        break
-                except:
-                    continue
+            # /Volumes 以下を走査し、DCIM フォルダを含むボリュームを探す
+            volumes_dir = Path('/Volumes')
+            target_volumes = [v for v in volumes_dir.iterdir() if (v / 'DCIM').exists()]
+            if not target_volumes:
+                # 後方互換: 旧来のボリューム名が存在する場合はそれも対象に
+                legacy_path = Path('/Volumes/PHOTO_UPLOAD_SD')
+                if legacy_path.exists():
+                    target_volumes.append(legacy_path)
+            if target_volumes:
+                for vol in target_volumes:
+                    try:
+                        subprocess.run(['diskutil', 'unmount', str(vol)], check=True)
+                        message = f'{vol.name} をアンマウントしました'
+                        break  # 最初に成功したボリュームで終了
+                    except subprocess.CalledProcessError:
+                        # 次の候補を試す
+                        continue
+                else:
+                    message = 'DCIM フォルダを含むボリュームのアンマウントに失敗しました'
             else:
-                message = 'SDカードが見つかりません'
+                message = 'DCIM フォルダを含むボリュームが見つかりません'
+        elif platform.system() == 'Linux':
+            # Linuxでは /media/$USER, /media, /mnt, /run/media を探索
+            user = os.environ.get('USER', 'user')
+            mount_points = [
+                Path(f'/media/{user}'),
+                Path('/media'),
+                Path('/mnt'),
+                Path('/run/media')
+            ]
+            candidate_paths = []
+            for base in mount_points:
+                if not base.exists():
+                    continue
+                for p in base.iterdir():
+                    if (p / 'DCIM').exists():
+                        candidate_paths.append(p)
+            if not candidate_paths:
+                # 後方互換
+                legacy = Path(f'/media/{user}/PHOTO_UPLOAD_SD')
+                if legacy.exists():
+                    candidate_paths.append(legacy)
+                legacy2 = Path('/media/PHOTO_UPLOAD_SD')
+                if legacy2.exists():
+                    candidate_paths.append(legacy2)
+            if candidate_paths:
+                for mp in candidate_paths:
+                    try:
+                        subprocess.run(['umount', str(mp)], check=True)
+                        message = f'{mp} をアンマウントしました'
+                        break
+                    except subprocess.CalledProcessError:
+                        continue
+                else:
+                    message = 'DCIM フォルダを含むマウントポイントのアンマウントに失敗しました'
+            else:
+                message = 'DCIM フォルダを含むマウントポイントが見つかりません'
+        elif platform.system() == 'Windows':
+            # Windows向けのアンマウント処理は不要のため未サポート扱い
+            message = 'このプラットフォームではSDカードのアンマウントをサポートしていません'
         else:
             message = 'このプラットフォームではSDカードのアンマウントをサポートしていません'
-        
+        # 結果を返却
         return jsonify({'message': message})
     except subprocess.CalledProcessError as e:
         return jsonify({'message': f'アンマウント中にエラーが発生しました: {str(e)}'}), 500
@@ -224,6 +355,21 @@ def get_log():
         
         # 空行を削除し、各行の末尾の改行を削除
         logs = [log.strip() for log in logs if log.strip()]
+        
+        # 起動時刻以降のログに限定
+        if UPLOAD_START_TIME is not None:
+            filtered_logs = []
+            for line in logs:
+                # ログ行の先頭は 'YYYY-MM-DD HH:MM:SS - ' 形式
+                try:
+                    ts_str = line.split(' - ', 1)[0]
+                    log_time = datetime.strptime(ts_str, '%Y-%m-%d %H:%M:%S')
+                    if log_time >= UPLOAD_START_TIME:
+                        filtered_logs.append(line)
+                except (ValueError, IndexError):
+                    # フォーマット外の行はそのまま含める
+                    filtered_logs.append(line)
+            logs = filtered_logs
         
         return jsonify({'logs': logs})
     except Exception as e:
@@ -289,6 +435,18 @@ def start_slideshow():
         random = data.get('random', False)
         fullscreen = data.get('fullscreen', True)
         verbose = data.get('verbose', False)
+        bgm = data.get('bgm', False)
+        
+        # 設定を保存
+        settings = {
+            'album_name': album_name,
+            'interval': interval,
+            'random': random,
+            'fullscreen': fullscreen,
+            'verbose': verbose,
+            'bgm': bgm
+        }
+        save_settings(settings)
         
         # album_slideshow.pyのパスを取得
         slideshow_script = Path(__file__).parent / "album_slideshow.py"
@@ -309,6 +467,8 @@ def start_slideshow():
             command.append('--fullscreen')
         if verbose:
             command.append('--verbose')
+        if bgm:
+            command.append('--bgm')
         
         # バックグラウンドで実行
         subprocess.Popen(command)
@@ -321,14 +481,14 @@ def start_slideshow():
 @app.route('/stop_slideshow', methods=['POST'])
 def stop_slideshow():
     try:
-        # スライドショープロセスを確実に終了
-        os.system("pkill -f 'slideshow.py|album_slideshow.py'")
-        # 念のため少し待機
+        # SIGTERM → SIGKILL の順に試行
+        kill_slideshow_processes(force=False)
+
+        # 少し待機して残存確認
         time.sleep(1)
-        # プロセスが残っていないか確認
         if is_process_running('slideshow.py') or is_process_running('album_slideshow.py'):
-            # より強力な終了シグナルを送信
-            os.system("pkill -9 -f 'slideshow.py|album_slideshow.py'")
+            logger.warning('SIGTERM で終了しなかったため SIGKILL を送信します')
+            kill_slideshow_processes(force=True)
         
         return jsonify({'status': 'success', 'message': 'スライドショーを停止しました'})
     except Exception as e:
@@ -338,6 +498,35 @@ def stop_slideshow():
 @app.route('/test')
 def test():
     return render_template('test.html')
+
+@app.route('/get_settings', methods=['GET'])
+def get_settings():
+    """保存されている設定を取得する"""
+    try:
+        settings = load_settings()
+        return jsonify(settings)
+    except Exception as e:
+        logger.error(f"設定の取得中にエラーが発生しました: {e}")
+        return jsonify({'error': str(e)}), 500
+
+def load_settings():
+    """設定ファイルから設定を読み込む"""
+    try:
+        if SETTINGS_FILE.exists():
+            with open(SETTINGS_FILE, 'r') as f:
+                return json.load(f)
+        return {}
+    except Exception as e:
+        logger.error(f"設定の読み込み中にエラーが発生しました: {e}")
+        return {}
+
+def save_settings(settings):
+    """設定をファイルに保存する"""
+    try:
+        with open(SETTINGS_FILE, 'w') as f:
+            json.dump(settings, f, indent=2)
+    except Exception as e:
+        logger.error(f"設定の保存中にエラーが発生しました: {e}")
 
 # Flaskのアクセスログを無効化
 logging.getLogger('werkzeug').setLevel(logging.ERROR)
@@ -350,4 +539,4 @@ if __name__ == '__main__':
         logging.error(f"テンプレートディレクトリが見つかりません: {TEMPLATE_DIR}")
     
     # デバッグモードで起動
-    app.run(host='0.0.0.0', port=5000, debug=True) 
+    app.run(host='0.0.0.0', port=8080, debug=True) 

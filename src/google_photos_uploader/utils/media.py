@@ -21,38 +21,49 @@ class BackgroundMusicPlayer:
     """BGM 再生を管理する共通クラス"""
 
     def __init__(self, music_files: List[str] | None = None, volume: float = 0.5, random_order: bool = False):
-        # music_files が None または空リストの場合はプロジェクト直下 bgm フォルダから探索
-        if not music_files:
-            # 現在のファイルの場所から正しいプロジェクトルートパスを取得
-            # src/google_photos_uploader/utils/media.py から3階層上がプロジェクトルート
-            bgm_dir = Path(__file__).resolve().parent.parent.parent.parent / 'bgm'
-            
-            # もし見つからない場合は、別の場所も探索
-            if not bgm_dir.exists():
-                # プロジェクトルートの可能性がある場所を探す
-                possible_root_dirs = [
-                    Path(__file__).resolve().parent.parent.parent.parent,  # 4階層上
-                    Path(__file__).resolve().parent.parent.parent,  # 3階層上 
-                    Path.home() / 'Projects' / 'google_photos_uploader'  # ホームディレクトリの特定パス
-                ]
-                
-                for possible_root in possible_root_dirs:
-                    possible_bgm_dir = possible_root / 'bgm'
-                    if possible_bgm_dir.exists():
-                        bgm_dir = possible_bgm_dir
-                        logger.info(f"BGMフォルダを発見しました: {bgm_dir}")
-                        break
-            
-            if bgm_dir.exists():
-                music_files = []
-                # サポートされている拡張子のファイルを探す
+        """コンストラクタ
+
+        Args:
+            music_files: BGM に使用する音楽ファイルのリスト。
+                * None  … BGM を無効化（再生しない）
+                * []    … BGM ディレクトリ（~/bgm）を自動探索して再生。
+                * list  … 指定されたパスのみを再生。
+            volume: 再生音量（0.0〜1.0）
+            random_order: True の場合は曲順をランダムにする。
+        """
+
+        # music_files が None の場合は BGM 無効
+        if music_files is None:
+            self.music_files = []
+            self.volume = volume
+            self.current_index = 0
+            self.enabled = False
+            self.random_order = random_order
+            logger.info("BGM は無効です (--bgm オプションが指定されていません)")
+            return
+
+        # music_files が空リストの場合も ~/bgm を探索
+        if isinstance(music_files, list) and len(music_files) == 0:
+            # 探索ディレクトリ（プロジェクト直下の bgm のみ）
+            candidates = [Path(__file__).resolve().parents[3] / 'bgm']
+
+            for bgm_dir in candidates:
+                if not bgm_dir.exists():
+                    continue
                 for ext in AUDIO_EXTENSIONS:
                     music_files.extend([str(p) for p in bgm_dir.glob(f'*{ext}')])
                 if music_files:
                     logger.info(f"BGMフォルダから{len(music_files)}個の音楽ファイルを読み込みました: {bgm_dir}")
-            else:
-                logger.warning(f"BGMフォルダが見つかりません: 試行パス = {bgm_dir}")
-                music_files = []
+                    break  # 最初に見つかったディレクトリを使用
+
+            if len(music_files) == 0:
+                logger.info("候補ディレクトリに音楽ファイルが見つかりません。BGM は再生しません")
+                self.music_files = []
+                self.volume = volume
+                self.current_index = 0
+                self.enabled = False
+                self.random_order = random_order
+                return
 
         # 対応拡張子 & 実在ファイルをフィルタ
         self.music_files = [p for p in music_files if Path(p).suffix.lower() in AUDIO_EXTENSIONS and os.path.exists(p)]
