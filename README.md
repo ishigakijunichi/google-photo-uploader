@@ -1,8 +1,8 @@
 # Google Photos Uploader
 
 SD カードの写真を Google Photos にアップロードしながら、スライドショーで表示するツールです。
-TV などのディスプレイに接続した Raspberry Pi での動作を前提にしています。\*Rasberry Pi 5 で動作確認済み
-写真が格納されたフォルダ名が**DCIM**であることを前提にしています。
+- TV などのディスプレイに接続した Raspberry Pi での動作を前提にしています。\*Rasberry Pi 5 で動作確認済み
+- 写真が格納されたフォルダ名が**DCIM**であることを前提にしています。
 
 ## 主な機能
 
