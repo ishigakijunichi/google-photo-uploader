@@ -45,16 +45,36 @@ MAX_BATCH_SIZE = 50  # 一度に作成できるメディアアイテムの最大
 def _is_valid_sd_root(path: Path) -> bool:
     """SDカードのルート候補にDCIMフォルダが存在するかどうかを判定"""
     if not path or not path.exists():
+        logger.debug(f"パスが存在しません: {path}")
         return False
-    if (path / DCIM_PATH).exists():
-        return True
-    # 1階層下にDCIMがある場合（例: /run/media/pi/volname/Some/Sub/DCIM）
+        
     try:
+        # 直接DCIMフォルダが存在するか確認
+        dcim_path = path / DCIM_PATH
+        dcim_exists = dcim_path.exists()
+        if dcim_exists:
+            logger.debug(f"DCIMフォルダを発見: {dcim_path}")
+            return True
+            
+        # 1階層下にDCIMがある場合（例: /run/media/pi/volname/Some/Sub/DCIM）
         for sub in path.iterdir():
-            if sub.is_dir() and (sub / DCIM_PATH).exists():
-                return True
-    except PermissionError:
-        pass
+            if not sub.is_dir():
+                continue
+                
+            sub_dcim = sub / DCIM_PATH
+            try:
+                if sub_dcim.exists():
+                    logger.debug(f"サブディレクトリ内にDCIMフォルダを発見: {sub_dcim}")
+                    return True
+            except PermissionError as e:
+                logger.warning(f"サブディレクトリへのアクセス権限がありません: {sub_dcim}, エラー: {e}")
+            except Exception as e:
+                logger.warning(f"サブディレクトリ確認中のエラー: {sub_dcim}, {type(e).__name__}: {e}")
+    except PermissionError as e:
+        logger.warning(f"パスへのアクセス権限がありません: {path}, エラー: {e}")
+    except Exception as e:
+        logger.warning(f"パス確認中の予期せぬエラー: {path}, {type(e).__name__}: {e}")
+        
     return False
 
 def find_sd_card():
@@ -77,8 +97,7 @@ def find_sd_card():
             Path(f'/media/{user}'),  # ユーザー固有のマウントポイント
             Path('/media'),          # システム全体のマウントポイント
             Path('/mnt'),            # 別の一般的なマウントポイント
-            Path('/run/media'),      # 一部のディストリビューションで使用
-            Path('/disk')            # Raspberry Piなどで使用されるマウントポイント
+            Path('/run/media')       # 一部のディストリビューションで使用
         ]
         
         for mount_path in mount_paths:
@@ -705,11 +724,17 @@ def main():
         elif sys.platform.startswith('linux'):
             user = os.environ.get('USER', 'user')
             path = f'/media/{user}'
+            
+            # パスが存在しない場合の代替パス
             if not os.path.exists(path):
+                logger.info(f"パス {path} が存在しないため、代替パスを使用します")
                 path = '/media'
                 
+            # ログ出力
+            logger.info(f"SDカード検出用の主要パス: {path}")
+                
             # Linuxの追加マウントポイントもチェック
-            for additional_path in ['/mnt', '/run/media', '/disk']:
+            for additional_path in ['/mnt', '/run/media']:
                 if os.path.exists(additional_path):
                     logger.info(f"追加マウントポイントを監視: {additional_path}")
                     
@@ -739,7 +764,7 @@ def main():
             
         # Linuxの場合は、追加マウントポイントも監視
         elif sys.platform.startswith('linux'):
-            for additional_path in ['/mnt', '/run/media', '/disk']:
+            for additional_path in ['/mnt', '/run/media']:
                 if os.path.exists(additional_path):
                     observer.schedule(event_handler, additional_path, recursive=True)
         
