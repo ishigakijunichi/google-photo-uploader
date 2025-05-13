@@ -269,6 +269,8 @@ def upload_photos(dcim_path, album_name=None, show_slideshow=False, fullscreen=T
     
     # 1. アップロードする写真を特定
     photo_files = _collect_media_files(Path(dcim_path))
+    if verbose:
+        logger.debug(f"{len(photo_files)} 件のメディアファイルを検出: {photo_files[:10]}")  # 先頭10件のみ表示
     if not photo_files:
         logger.info(f"DCIM に対象ファイルがありません: {dcim_path}")
         
