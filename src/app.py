@@ -10,6 +10,8 @@ import psutil
 import json
 import time
 from datetime import datetime
+import socket
+import webbrowser
 
 # アプリケーションのルートディレクトリを設定
 APP_ROOT = Path(__file__).parent
@@ -528,6 +530,47 @@ def save_settings(settings):
     except Exception as e:
         logger.error(f"設定の保存中にエラーが発生しました: {e}")
 
+# --------------------------------------------------
+# ネットワーク関連関数
+# --------------------------------------------------
+
+def get_ip_address():
+    """
+    マシンのIPアドレスを取得する
+    
+    Returns:
+        str: IPアドレス。取得できない場合は127.0.0.1
+    """
+    try:
+        # 外部に接続して自分のIPアドレスを確認する方法
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # 実際には接続しない
+        s.connect(('8.8.8.8', 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception as e:
+        logger.error(f"IPアドレスの取得に失敗しました: {e}")
+        return '127.0.0.1'  # ローカルホストを返す
+
+def open_browser(url):
+    """
+    指定URLをブラウザで開く
+    
+    Args:
+        url (str): 開くURL
+    """
+    try:
+        # Raspberry Piならchromium-browserを使用
+        if platform.system() == 'Linux' and os.path.exists('/usr/bin/chromium-browser'):
+            subprocess.Popen(['chromium-browser', '--start-fullscreen', url])
+        else:
+            # それ以外のプラットフォームではデフォルトブラウザを使用
+            webbrowser.open(url)
+        logger.info(f"ブラウザを開きました: {url}")
+    except Exception as e:
+        logger.error(f"ブラウザの起動に失敗しました: {e}")
+
 # Flaskのアクセスログを無効化
 logging.getLogger('werkzeug').setLevel(logging.ERROR)
 
@@ -538,5 +581,16 @@ if __name__ == '__main__':
     if not TEMPLATE_DIR.exists():
         logging.error(f"テンプレートディレクトリが見つかりません: {TEMPLATE_DIR}")
     
+    # IPアドレスを取得
+    ip_address = get_ip_address()
+    port = 8080
+    url = f"http://{ip_address}:{port}"
+    
+    logger.info(f"アプリケーションを起動します: {url}")
+    
+    # ブラウザを開く（少し遅延させる）
+    import threading
+    threading.Timer(2.0, lambda: open_browser(url)).start()
+    
     # デバッグモードで起動
-    app.run(host='0.0.0.0', port=8080, debug=True) 
+    app.run(host='0.0.0.0', port=port, debug=True) 
