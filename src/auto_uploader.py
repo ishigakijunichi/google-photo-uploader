@@ -274,40 +274,39 @@ def upload_photos(dcim_path, album_name=None, show_slideshow=False, fullscreen=T
     if not photo_files:
         logger.info(f"DCIM に対象ファイルがありません: {dcim_path}")
         
-        # 写真がない場合でもスライドショーを表示するなら最近のファイルを表示
-        if show_slideshow:
-            logger.info("アップロードする写真はありませんが、SDカードの写真をスライドショーで表示します")
-            # photo_files から最大100枚をピックアップ
-            limited_files = photo_files[:min(len(photo_files), 100)]
-            logger.info(f"スライドショー用に {len(limited_files)}/{len(photo_files)} 枚を使用します")
-            
-            # 進捗ファイルを作成
-            progress_path = Path.home() / '.google_photos_uploader' / 'upload_progress.json'
-            progress_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(progress_path, 'w', encoding='utf-8') as f:
-                progress_data = {
-                    "files": limited_files,
-                    "total": len(limited_files),
-                    "success": 0,
-                    "failed": 0,
-                    "completed": False,
-                    "album_name": album_name or "SDカード",
-                    "message": "アップロードする写真はありません。SDカードの最近の写真を再生します。"
-                }
-                json.dump(progress_data, f)
-            
-            # 限定ファイルのみを表示
-            show_uploaded_slideshow(
-                fullscreen=fullscreen,
-                recent=True,
-                current_only=True,
-                interval=interval,
-                random_order=random_order,
-                no_pending=no_pending,
-                verbose=verbose,
-                bgm_files=bgm_files,
-                random_bgm=random_bgm
-            )
+        # 写真がない場合でも、SDカードの写真をスライドショーで表示
+        logger.info("アップロードする写真はありませんが、SDカードの写真をスライドショーで表示します")
+        # photo_files から最大100枚をピックアップ
+        limited_files = photo_files[:min(len(photo_files), 100)]
+        logger.info(f"スライドショー用に {len(limited_files)}/{len(photo_files)} 枚を使用します")
+        
+        # 進捗ファイルを作成
+        progress_path = Path.home() / '.google_photos_uploader' / 'upload_progress.json'
+        progress_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(progress_path, 'w', encoding='utf-8') as f:
+            progress_data = {
+                "files": limited_files,
+                "total": len(limited_files),
+                "success": 0,
+                "failed": 0,
+                "completed": False,
+                "album_name": album_name or "SDカード",
+                "message": "アップロードする写真はありません。SDカードの最近の写真を再生します。"
+            }
+            json.dump(progress_data, f)
+        
+        # 限定ファイルのみを表示
+        show_uploaded_slideshow(
+            fullscreen=fullscreen,
+            recent=True,
+            current_only=True,
+            interval=interval,
+            random_order=random_order,
+            no_pending=no_pending,
+            verbose=verbose,
+            bgm_files=bgm_files,
+            random_bgm=random_bgm
+        )
         return False
     
     # アップロード済み/失敗ログを読み込み
@@ -329,40 +328,39 @@ def upload_photos(dcim_path, album_name=None, show_slideshow=False, fullscreen=T
     if not all_upload_files:
         logger.info("アップロード対象ファイルはありません")
         
-        # 写真がない場合でもスライドショーを表示するなら最近のファイルを表示
-        if show_slideshow:
-            logger.info("アップロードする写真はありませんが、SDカードの写真をスライドショーで表示します")
-            # photo_files から最大100枚をピックアップ
-            limited_files = photo_files[:min(len(photo_files), 100)]
-            logger.info(f"スライドショー用に {len(limited_files)}/{len(photo_files)} 枚を使用します")
-            
-            # 進捗ファイルを作成
-            progress_path = Path.home() / '.google_photos_uploader' / 'upload_progress.json'
-            progress_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(progress_path, 'w', encoding='utf-8') as f:
-                progress_data = {
-                    "files": limited_files,
-                    "total": len(limited_files),
-                    "success": 0,
-                    "failed": 0,
-                    "completed": False,
-                    "album_name": album_name or "SDカード",
-                    "message": "アップロードする写真はありません。SDカードの最近の写真を再生します。"
-                }
-                json.dump(progress_data, f)
-            
-            # 限定ファイルのみを表示
-            show_uploaded_slideshow(
-                fullscreen=fullscreen,
-                recent=True,
-                current_only=True,
-                interval=interval,
-                random_order=random_order,
-                no_pending=no_pending,
-                verbose=verbose,
-                bgm_files=bgm_files,
-                random_bgm=random_bgm
-            )
+        # 写真がない場合でも、SDカードの写真をスライドショーで表示
+        logger.info("アップロードする写真はありませんが、SDカードの写真をスライドショーで表示します")
+        # photo_files から最大100枚をピックアップ
+        limited_files = photo_files[:min(len(photo_files), 100)]
+        logger.info(f"スライドショー用に {len(limited_files)}/{len(photo_files)} 枚を使用します")
+        
+        # 進捗ファイルを作成
+        progress_path = Path.home() / '.google_photos_uploader' / 'upload_progress.json'
+        progress_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(progress_path, 'w', encoding='utf-8') as f:
+            progress_data = {
+                "files": limited_files,
+                "total": len(limited_files),
+                "success": 0,
+                "failed": 0,
+                "completed": False,
+                "album_name": album_name or "SDカード",
+                "message": "アップロードする写真はありません。SDカードの最近の写真を再生します。"
+            }
+            json.dump(progress_data, f)
+        
+        # 限定ファイルのみを表示
+        show_uploaded_slideshow(
+            fullscreen=fullscreen,
+            recent=True,
+            current_only=True,
+            interval=interval,
+            random_order=random_order,
+            no_pending=no_pending,
+            verbose=verbose,
+            bgm_files=bgm_files,
+            random_bgm=random_bgm
+        )
         return False
     
     # 2. スライドショーを表示（アップロード対象の写真を表示）
