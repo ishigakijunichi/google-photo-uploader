@@ -31,7 +31,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # 設定値
-VOLUME_NAMES = ["PHOTO_UPLOAD_SD", "62 GB Volume", "Untitled"]  # SDカードのボリューム名のリスト
 DCIM_PATH = "DCIM"  # DCIMフォルダのパス
 SUPPORTED_EXTENSIONS = [
     '.jpg', '.jpeg', '.png', '.gif', '.bmp',  # 画像ファイル
@@ -62,11 +61,15 @@ def find_sd_card():
     """SDカードのパスを探す"""
     # macOSの場合は/Volumes以下を探す
     if sys.platform == 'darwin':
-        for volume_name in VOLUME_NAMES:
-            sd_path = Path('/Volumes') / volume_name
-            if _is_valid_sd_root(sd_path):
-                return sd_path
-    # Linuxの場合は/media/$USER以下を探す
+        volumes_dir = Path('/Volumes')
+        if volumes_dir.exists():
+            try:
+                for volume in volumes_dir.iterdir():
+                    if _is_valid_sd_root(volume):
+                        return volume
+            except PermissionError:
+                logger.warning("ボリュームディレクトリの読み取り権限がありません")
+    # Linuxの場合は複数のマウントポイントを探す
     elif sys.platform.startswith('linux'):
         user = os.environ.get('USER', 'user')
         # 一般的なマウントパスをチェック
@@ -74,7 +77,8 @@ def find_sd_card():
             Path(f'/media/{user}'),  # ユーザー固有のマウントポイント
             Path('/media'),          # システム全体のマウントポイント
             Path('/mnt'),            # 別の一般的なマウントポイント
-            Path('/run/media')       # 一部のディストリビューションで使用
+            Path('/run/media'),      # 一部のディストリビューションで使用
+            Path('/disk')            # Raspberry Piなどで使用されるマウントポイント
         ]
         
         for mount_path in mount_paths:
@@ -84,38 +88,31 @@ def find_sd_card():
                 try:
                     search_dirs.extend([p for p in mount_path.iterdir() if p.is_dir()])
                 except PermissionError:
-                    pass  # 権限のないディレクトリは無視
+                    logger.warning(f"マウントポイントの読み取り権限がありません: {mount_path}")
+                    continue  # 権限のないディレクトリは無視
 
                 for search_dir in search_dirs:
-                    for volume_name in VOLUME_NAMES:
-                        candidate = search_dir / volume_name
-                        if _is_valid_sd_root(candidate):
-                            return candidate
-
-                    # 各ディレクトリ内のサブディレクトリを部分一致でチェック
+                    # DCIMフォルダを含む任意のディレクトリを探す
                     try:
+                        # まず直接チェック
+                        if _is_valid_sd_root(search_dir):
+                            return search_dir
+                            
+                        # サブディレクトリをチェック
                         for sub in search_dir.iterdir():
-                            if sub.is_dir() and any(vol.lower() in sub.name.lower() for vol in VOLUME_NAMES):
-                                if _is_valid_sd_root(sub):
-                                    return sub
-                    except PermissionError:
-                        continue
-
-                    # DCIMフォルダを含む任意のサブディレクトリを探す（ボリューム名が一致しない場合のフォールバック）
-                    try:
-                        for sub in search_dir.iterdir():
-                            if sub.is_dir() and (sub / DCIM_PATH).exists():
+                            if sub.is_dir() and _is_valid_sd_root(sub):
                                 return sub
                     except PermissionError:
+                        logger.warning(f"ディレクトリの読み取り権限がありません: {search_dir}")
                         continue
     # Windowsの場合はドライブレターを探す
     elif sys.platform == 'win32':
         import win32api
         for drive in win32api.GetLogicalDriveStrings().split('\000')[:-1]:
             try:
-                volume_name = win32api.GetVolumeInformation(drive)[0]
-                if volume_name in VOLUME_NAMES:
-                    return Path(drive)
+                drive_path = Path(drive)
+                if _is_valid_sd_root(drive_path):
+                    return drive_path
             except:
                 continue
     return None
@@ -526,16 +523,11 @@ class SDCardHandler(FileSystemEventHandler):
         # SDカードのDCIMフォルダを探す
         sd_path = None
         
-        # 特定のボリュームに関するイベントの場合
-        if any(volume in event.src_path for volume in VOLUME_NAMES):
-            volume_path = Path(event.src_path)
-            # イベントパスがボリューム自体かその親ディレクトリの場合
-            if volume_path.name in VOLUME_NAMES:
-                sd_path = volume_path
-            elif '/Volumes/' + VOLUME_NAMES[0] in event.src_path:
-                sd_path = Path('/Volumes') / VOLUME_NAMES[0]
-                
-            logger.debug(f"対象ボリュームのイベント: {sd_path}")
+        # イベントパスまたはその親ディレクトリにDCIMフォルダがあるかチェック
+        event_path = Path(event.src_path)
+        if _is_valid_sd_root(event_path):
+            sd_path = event_path
+            logger.debug(f"イベントパスにDCIMフォルダを検出: {sd_path}")
         
         # 特定のボリュームが見つからない場合は通常の検索
         if not sd_path:
@@ -578,7 +570,7 @@ class SDCardHandler(FileSystemEventHandler):
             try:
                 for volume in volumes_dir.iterdir():
                     logger.debug(f"ボリュームをチェック: {volume}")
-                    if (volume / DCIM_PATH).exists():
+                    if _is_valid_sd_root(volume):
                         logger.info(f"DCIM フォルダを含むボリュームを発見: {volume}")
                         # 順序に沿って処理：写真特定 → スライドショー表示 → アップロード開始
                         success = upload_photos(
@@ -703,12 +695,24 @@ def main():
         # macOSの場合は/Volumesディレクトリを監視
         if sys.platform == 'darwin':
             path = '/Volumes'
+            
+            # 自動検出したSDカードも直接監視
+            sd_path = find_sd_card()
+            if sd_path and sd_path.exists() and _is_valid_sd_root(sd_path):
+                logger.info(f"自動検出したSDカードを直接監視: {sd_path}")
+                
         # Linuxの場合は/mediaディレクトリを監視
         elif sys.platform.startswith('linux'):
             user = os.environ.get('USER', 'user')
             path = f'/media/{user}'
             if not os.path.exists(path):
                 path = '/media'
+                
+            # Linuxの追加マウントポイントもチェック
+            for additional_path in ['/mnt', '/run/media', '/disk']:
+                if os.path.exists(additional_path):
+                    logger.info(f"追加マウントポイントを監視: {additional_path}")
+                    
         # Windowsの場合はドライブ監視は難しいのでポーリングモードを使用
         else:
             logger.info("このプラットフォームでは監視モードがサポートされていません。ポーリングモードに切り替えます。")
@@ -729,12 +733,15 @@ def main():
         # ボリュームディレクトリを監視（再帰的にサブディレクトリも含める）
         observer.schedule(event_handler, path, recursive=True)
         
-        # macOSの場合は、特定のボリューム名も直接監視
-        if sys.platform == 'darwin':
-            specific_volume = Path('/Volumes') / VOLUME_NAMES[0]
-            if specific_volume.exists():
-                logger.info(f"特定のボリュームを監視: {specific_volume}")
-                observer.schedule(event_handler, str(specific_volume), recursive=False)
+        # macOSの場合は、自動検出したSDカードも直接監視
+        if sys.platform == 'darwin' and sd_path and sd_path.exists():
+            observer.schedule(event_handler, str(sd_path), recursive=False)
+            
+        # Linuxの場合は、追加マウントポイントも監視
+        elif sys.platform.startswith('linux'):
+            for additional_path in ['/mnt', '/run/media', '/disk']:
+                if os.path.exists(additional_path):
+                    observer.schedule(event_handler, additional_path, recursive=True)
         
         observer.start()
         
