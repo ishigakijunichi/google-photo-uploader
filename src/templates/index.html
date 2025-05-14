@@ -178,6 +178,10 @@
                     </div>
                 </div>
             </div>
+            <div class="console-log-container">
+                <h3>コンソールログ</h3>
+                <pre id="console-log" class="console-log"></pre>
+            </div>
             <div class="log-container">
                 <h3>ログ</h3>
                 <div id="log" class="log"></div>
@@ -197,8 +201,23 @@
             }
         }
 
+        // コンソールログを定期的に更新する関数
+        async function updateConsoleLog() {
+            try {
+                const response = await fetch('/get_console_log');
+                const data = await response.json();
+                const consoleLogElement = document.getElementById('console-log');
+                consoleLogElement.innerHTML = data.logs.join('\n');
+                consoleLogElement.scrollTop = consoleLogElement.scrollHeight; // 最新のログまで自動スクロール
+            } catch (error) {
+                console.error('コンソールログの取得に失敗しました:', error);
+            }
+        }
+
         // 5秒ごとにログを更新
         setInterval(updateLog, 5000);
+        // 5秒ごとにコンソールログも更新
+        setInterval(updateConsoleLog, 5000);
         
         // SDカード監視の状態によってチェック間隔の表示を切り替える関数
         function toggleIntervalVisibility() {
@@ -211,6 +230,8 @@
         document.addEventListener('DOMContentLoaded', function() {
             toggleIntervalVisibility();
             checkProcessStatus();
+            updateLog(); // 初期ログを表示
+            updateConsoleLog(); // 初期コンソールログを表示
         });
         
         // 監視チェックボックスの変更イベント

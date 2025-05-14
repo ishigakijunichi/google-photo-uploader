@@ -378,6 +378,54 @@ def get_log():
         logger.error(f"ログの取得中にエラーが発生しました: {e}")
         return jsonify({'logs': [f"ログの取得中にエラーが発生しました: {str(e)}"]})
 
+@app.route('/get_console_log')
+def get_console_log():
+    """
+    コンソールログを取得するエンドポイント
+    標準出力と標準エラー出力に送られるログをWebUIに表示する
+    """
+    try:
+        # コンソールログファイルのパスを指定
+        # Python標準ライブラリのloggingによって生成される全てのログファイルを収集
+        log_files = [
+            Path.home() / '.google_photos_uploader' / 'uploader.log',
+            Path.home() / '.google_photos_uploader' / 'slideshow.log'
+        ]
+        
+        all_logs = []
+        
+        # 各ログファイルから最新の内容を取得
+        for log_file in log_files:
+            if log_file.exists():
+                with open(log_file, 'r', encoding='utf-8') as f:
+                    logs = f.readlines()[-100:]  # 最新の100行を取得
+                    # 空行を削除し、各行の末尾の改行を削除
+                    logs = [log.strip() for log in logs if log.strip()]
+                    all_logs.extend(logs)
+        
+        # 時刻でソート
+        sorted_logs = []
+        for line in all_logs:
+            try:
+                # ログ行の先頭は 'YYYY-MM-DD HH:MM:SS - ' 形式
+                ts_str = line.split(' - ', 1)[0]
+                log_time = datetime.strptime(ts_str, '%Y-%m-%d %H:%M:%S')
+                sorted_logs.append((log_time, line))
+            except (ValueError, IndexError):
+                # フォーマット外の行は一番古い時間（datetime.min）で追加
+                sorted_logs.append((datetime.min, line))
+        
+        # 時刻でソート
+        sorted_logs.sort(key=lambda x: x[0], reverse=True)
+        
+        # 最新100件に制限
+        logs = [log[1] for log in sorted_logs[:100]]
+        
+        return jsonify({'logs': logs})
+    except Exception as e:
+        logger.error(f"コンソールログの取得中にエラーが発生しました: {e}")
+        return jsonify({'logs': [f"コンソールログの取得中にエラーが発生しました: {str(e)}"]})
+
 @app.route('/check_status', methods=['GET'])
 def check_status():
     """現在のアップロードやスライドショーの状態を取得する"""
