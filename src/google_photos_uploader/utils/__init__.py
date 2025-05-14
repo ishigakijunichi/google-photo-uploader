@@ -48,7 +48,16 @@ def find_sd_card(volume_name: str = "PHOTO_UPLOAD_SD") -> Optional[Path]:
     # Linuxの場合は/media/$USER以下を探す
     elif sys.platform.startswith('linux'):
         user = os.environ.get('USER', 'user')
+        # 一般的なパターン
         sd_path = Path(f'/media/{user}') / volume_name
+        if sd_path.exists():
+            return sd_path
+        # Raspberry Pi Desktop などで /media/{user}/disk にマウントされることがある
+        sd_path = Path(f'/media/{user}/disk')
+        if sd_path.exists():
+            return sd_path
+        # 後方互換: /media/disk
+        sd_path = Path('/media/disk')
         if sd_path.exists():
             return sd_path
         # Ubuntuの別のパターン

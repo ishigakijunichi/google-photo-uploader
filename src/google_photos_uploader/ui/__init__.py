@@ -40,8 +40,6 @@ def launch_slideshow(
         command.append("--fullscreen")
     if current_only:
         command.append("--current")
-    elif recent:
-        command.append("--recent")
     if interval != 5:
         command.extend(["--interval", str(interval)])
     if random_order:
@@ -57,9 +55,16 @@ def launch_slideshow(
 
     try:
         logger.info("スライドショーを起動: %s", " ".join(command))
+        
+        # 環境変数の設定
+        env = os.environ.copy()
+        if 'DISPLAY' not in env:
+            env['DISPLAY'] = ':0'
+        logger.info("DISPLAY環境変数: %s", env.get('DISPLAY'))
+        
         if sys.platform == "win32":
-            subprocess.Popen(command, creationflags=subprocess.CREATE_NEW_CONSOLE)
+            subprocess.Popen(command, creationflags=subprocess.CREATE_NEW_CONSOLE, env=env)
         else:
-            subprocess.Popen(command, start_new_session=True)
+            subprocess.Popen(command, start_new_session=True, env=env)
     except Exception as e:
         logger.error("スライドショー起動に失敗: %s", e)

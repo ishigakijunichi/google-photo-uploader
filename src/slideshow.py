@@ -368,6 +368,7 @@ def load_uploaded_files(only_recent=False, include_pending=True):
     uploaded_log = Path.home() / '.google_photos_uploader' / 'uploaded_files.txt'
     
     result_files = []
+    pending_files = []  # type: list
     
     # アップロード予定/失敗ファイルを追加
     if include_pending:
@@ -427,6 +428,13 @@ def load_uploaded_files(only_recent=False, include_pending=True):
         
         # 重複を排除
         result_files = list(dict.fromkeys(result_files))
+
+        # アップロードがない（pending_files が空）場合は最新 100 件のみに制限し、
+        # その 100 件を古い順に再生できるように並び順は維持する
+        if not pending_files and not only_recent and len(result_files) > 100:
+            logger.info(f"アップロード中ファイルがないため、最新 100 件に絞り込みます (全 {len(result_files)} 件) → 100 件")
+            # result_files は古い順になっているため、末尾 100 件が最新 100 件
+            result_files = result_files[-100:]
         
         mode_str = "最近の" if only_recent else "すべての"
         logger.info(f"{mode_str}ファイル: {len(result_files)}件が利用可能")
@@ -443,7 +451,6 @@ def main():
     parser.add_argument('--random', action='store_true', help='ランダム順で表示する')
     parser.add_argument('--fullscreen', action='store_true', help='フルスクリーンモードで表示する')
     parser.add_argument('--verbose', action='store_true', help='詳細なログを出力する')
-    parser.add_argument('--recent', action='store_true', help='最近アップロードした写真のみ表示する')
     parser.add_argument('--current', action='store_true', help='現在アップロード中の写真のみ表示する')
     parser.add_argument('--no-pending', action='store_true', help='アップロード予定/失敗ファイルを含めない')
     parser.add_argument('--bgm', nargs='*', help='BGMとして再生する音楽ファイルまたはディレクトリ（複数指定可）')
@@ -459,7 +466,7 @@ def main():
     if args.current:
         image_files = load_current_upload_files()
     else:
-        image_files = load_uploaded_files(only_recent=args.recent, include_pending=not args.no_pending)
+        image_files = load_uploaded_files(only_recent=False, include_pending=not args.no_pending)
     
     if not image_files:
         logger.error("表示できる画像がありません")

@@ -39,10 +39,25 @@ def get_credentials() -> Optional[Credentials]:
     # 既存のトークンファイルがあるか確認
     if TOKEN_FILE.exists():
         try:
-            creds = Credentials.from_authorized_user_info(
-                json.loads(TOKEN_FILE.read_text()), SCOPES)
+            # 安全にトークンを読み込む
+            with open(TOKEN_FILE, 'r', encoding='utf-8') as f:
+                token_data = json.load(f)
+            
+            creds = Credentials.from_authorized_user_info(token_data, SCOPES)
+            logger.info("既存のトークンを読み込みました")
+        except json.JSONDecodeError as e:
+            logger.error(f"トークンファイルの形式が不正です: {e}")
+            # 破損したトークンファイルをバックアップ
+            try:
+                backup_file = TOKEN_FILE.with_suffix('.json.bak')
+                TOKEN_FILE.rename(backup_file)
+                logger.info(f"破損したトークンファイルをバックアップしました: {backup_file}")
+            except Exception as backup_err:
+                logger.error(f"トークンファイルのバックアップに失敗: {backup_err}")
+            creds = None
         except Exception as e:
             logger.error(f"トークンファイルの読み込みに失敗: {e}")
+            creds = None
     
     # 有効な認証情報がない場合
     if not creds or not creds.valid:
@@ -86,33 +101,12 @@ def get_credentials() -> Optional[Credentials]:
                         )
                         logger.info("ブラウザを使用した認証が完了しました")
                     except Exception as e:
-                        logger.warning(f"ローカルサーバ方式に失敗: {e}. QR方式にフォールバックします。")
-                        creds = None
-                
-                # GUI が無い、またはブラウザ方式に失敗した場合は QR コード方式
-                if creds is None:
-                    auth_url, _ = flow.authorization_url(
-                        prompt='consent',
-                        redirect_uri='urn:ietf:wg:oauth:2.0:oob'
-                    )
-                    
-                    qr = qrcode.QRCode(
-                        version=1,
-                        error_correction=qrcode.constants.ERROR_CORRECT_L,
-                        box_size=10,
-                        border=4,
-                    )
-                    qr.add_data(auth_url)
-                    qr.make(fit=True)
-                    qr_image = qr.make_image(fill_color="black", back_color="white")
-                    qr_path = CREDENTIALS_DIR / 'auth_qr.png'
-                    qr_image.save(qr_path)
-                    print(f"\nQRコードを保存しました: {qr_path}")
-                    print("このQRコードをスキャンして認証を完了してください。")
-                    print("ブラウザが開いたら、表示される認証コードをこの端末に入力してください。\n")
-                    code = input("認証コード: ")
-                    flow.fetch_token(code=code)
-                    creds = flow.credentials
+                        logger.error(f"ブラウザ認証に失敗しました: {e}")
+                        return None
+                else:
+                    # GUIがない場合は認証できないので終了
+                    logger.error("GUIが見つかりません。認証を続行できません。")
+                    return None
                 
             except Exception as e:
                 logger.error(f"新規認証に失敗: {e}")
@@ -121,9 +115,29 @@ def get_credentials() -> Optional[Credentials]:
         # トークンを保存
         try:
             CREDENTIALS_DIR.mkdir(parents=True, exist_ok=True)
-            TOKEN_FILE.write_text(creds.to_json())
+            # to_json()メソッドがない場合は、jsonモジュールを使用してシリアライズ
+            try:
+                # 最新のGoogle Auth Libraryでのシリアライズ方法を試す
+                token_data = {
+                    'token': creds.token,
+                    'refresh_token': creds.refresh_token,
+                    'token_uri': creds.token_uri,
+                    'client_id': creds.client_id,
+                    'client_secret': creds.client_secret,
+                    'scopes': creds.scopes
+                }
+                
+                # トークンファイルを書き込む前に一時的なファイルを使用し、書き込みが成功したら移動
+                temp_token_file = CREDENTIALS_DIR / 'token.json.tmp'
+                with open(temp_token_file, 'w', encoding='utf-8') as f:
+                    json.dump(token_data, f)
+                    
+                # 一時ファイルを本来のファイルに置き換え
+                temp_token_file.replace(TOKEN_FILE)
+                logger.info("トークンを正常に保存しました")
+            except Exception as e:
+                logger.error(f"トークンのシリアライズに失敗: {e}")
         except Exception as e:
             logger.error(f"トークンの保存に失敗: {e}")
-            # トークン保存に失敗しても認証情報は返す
     
     return creds

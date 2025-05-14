@@ -42,10 +42,14 @@ class BackgroundMusicPlayer:
             logger.info("BGM は無効です (--bgm オプションが指定されていません)")
             return
 
-        # music_files が空リストの場合も ~/bgm を探索
+        # music_files が空リストの場合、まず/bgmを探索し、なければ/bgm_sampleを探索
         if isinstance(music_files, list) and len(music_files) == 0:
-            # 探索ディレクトリ（プロジェクト直下の bgm のみ）
-            candidates = [Path(__file__).resolve().parents[3] / 'bgm']
+            # 探索ディレクトリ（プロジェクト直下の bgm、次に bgm_sample）
+            project_root = Path(__file__).resolve().parents[3]
+            candidates = [
+                project_root / 'bgm',
+                project_root / 'bgm_sample'
+            ]
 
             for bgm_dir in candidates:
                 if not bgm_dir.exists():

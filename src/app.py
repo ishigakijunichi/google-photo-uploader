@@ -142,13 +142,17 @@ def index():
 @app.route('/start_upload', methods=['POST'])
 def start_upload():
     try:
+        # 現在のプロセス状態をチェック
+        uploader_running = is_process_running('auto_uploader.py')
+        if uploader_running:
+            return jsonify({'status': 'error', 'message': 'アップロードは既に実行中です。'}), 400
+            
+        # アプリケーションから送られてきたパラメータを取得
         data = request.get_json()
-        album_name = data.get('album_name', 'Photo Uploader')
-        # 監視機能は廃止: デフォルトで無効
+        album_name = data.get('album_name', '')
         watch = data.get('watch', False)
-        # ポーリング間隔。0 の場合は監視/ポーリングを行わない
         interval = data.get('interval', 0)
-        slideshow = data.get('slideshow', True)
+        slideshow = data.get('slideshow', False)
         fullscreen = data.get('fullscreen', True)
         all_photos = data.get('all_photos', False)
         current_only = data.get('current_only', False)
@@ -204,10 +208,12 @@ def start_upload():
             command.extend(['--album', album_name])
         # 監視は使用しないため --watch は付与しない
         # --interval 0 でポーリングを無効化
-        command.extend(['--interval', '0'])
         if slideshow:
             command.append('--slideshow')
-        if not fullscreen:
+        # フルスクリーン設定を明示的に指定（どちらかを必ず指定）
+        if fullscreen:
+            command.append('--fullscreen')
+        else:
             command.append('--no-fullscreen')
         if all_photos:
             command.append('--all-photos')
@@ -224,8 +230,13 @@ def start_upload():
         if bgm:
             command.append('--bgm')
         
+        # 環境変数を設定
+        env = os.environ.copy()
+        if 'DISPLAY' not in env:
+            env['DISPLAY'] = ':0'
+        
         # バックグラウンドで実行
-        subprocess.Popen(command)
+        subprocess.Popen(command, env=env)
         
         return jsonify({'status': 'success', 'message': '起動中'})
     except Exception as e:
@@ -529,13 +540,17 @@ def start_slideshow():
         if bgm:
             command.append('--bgm')
         
-        # バックグラウンドで実行
-        subprocess.Popen(command)
+        # 環境変数を設定
+        env = os.environ.copy()
+        if 'DISPLAY' not in env:
+            env['DISPLAY'] = ':0'
         
-        return jsonify({'status': 'success', 'message': 'スライドショーを起動中'})
+        # バックグラウンドで実行
+        subprocess.Popen(command, env=env)
+        
+        return jsonify({'status': 'success', 'message': '起動中'})
     except Exception as e:
-        logger.error(f"スライドショー起動中にエラーが発生しました: {e}")
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        return jsonify({'status': 'error', 'message': f"エラーが発生しました: {e}"}), 500
 
 @app.route('/stop_slideshow', methods=['POST'])
 def stop_slideshow():
@@ -619,19 +634,8 @@ def open_browser(url):
             user_data_dir = Path.home() / '.google_photos_uploader' / 'browser_data'
             user_data_dir.mkdir(parents=True, exist_ok=True)
             
-            # # Raspberry Pi 5 では大半のフラグは不要。必要最低限で起動する。
-            # chrome_options = [
-            #     '--use-gl=egl',          # EGL/GLES を強制（ANGLE 初期化失敗を回避）
-            #     '--no-sandbox',          # root で実行する場合のみ必須
-            #     '--disable-dev-shm-usage',  # /dev/shm が 64 MB の環境向け
-            #     f'--user-data-dir={user_data_dir}',
-            #     '--kiosk',               # フルスクリーン
-            #     url
-            # ]
-            
-            # Chromeを起動
-            # subprocess.Popen(['chromium-browser'] + chrome_options)
-            subprocess.Popen(['chromium-browser'])
+            # Chromiumを起動（URLを指定）
+            subprocess.Popen(['chromium-browser', url])
             
         else:
             # その他のプラットフォームでは通常の方法でブラウザを開く

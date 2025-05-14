@@ -27,12 +27,21 @@ MAX_BATCH_SIZE = 50
 # --------------------------------------------------
 
 _cached_creds = None
+_creds_lock = threading.Lock()
 
 def _get_credentials():
     global _cached_creds
-    if _cached_creds is None:
-        _cached_creds = get_credentials()
-    return _cached_creds
+    with _creds_lock:
+        if _cached_creds is None or not _cached_creds.valid:
+            logger.debug("認証情報を新規取得します")
+            _cached_creds = get_credentials()
+        return _cached_creds
+
+def _clear_credentials_cache():
+    global _cached_creds
+    with _creds_lock:
+        _cached_creds = None
+        logger.debug("認証情報キャッシュをクリアしました")
 
 # --------------------------------------------------
 # 外部公開関数
@@ -61,9 +70,13 @@ def upload_single_file(file_path: str, verbose: bool = False) -> str | None:
             logger.info(f"アップロード成功: {file_path}")
         else:
             logger.error(f"アップロード失敗: {file_path}")
+            # アップロード失敗時に認証エラーの可能性があるため、キャッシュをクリア
+            _clear_credentials_cache()
         return token
     except Exception as e:
         logger.error(f"upload_single_file で例外: {e}")
+        # 例外発生時に認証エラーの可能性があるため、キャッシュをクリア
+        _clear_credentials_cache()
         return None
 
 def batch_create_media_items(tokens: List[str], album_name: str | None, verbose: bool = False) -> Dict[str, List[str]]:
@@ -77,9 +90,15 @@ def batch_create_media_items(tokens: List[str], album_name: str | None, verbose:
             logger.debug(
                 f"batch_create_media_items 開始: token={len(tokens)}, album={album_name}"
             )
-        return gp_batch_create(tokens, album_name, creds)
+        result = gp_batch_create(tokens, album_name, creds)
+        if not result.get("success"):
+            # 全て失敗した場合は認証エラーの可能性があるため、キャッシュをクリア
+            _clear_credentials_cache()
+        return result
     except Exception as e:
         logger.error(f"batch_create_media_items で例外: {e}")
+        # 例外発生時に認証エラーの可能性があるため、キャッシュをクリア
+        _clear_credentials_cache()
         return {"success": [], "failed": tokens}
 
 # 進捗ファイルのパス

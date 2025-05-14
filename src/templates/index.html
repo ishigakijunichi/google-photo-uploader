@@ -163,10 +163,10 @@
                     </div>
                 </div>
             </div>
-            <div class="console-log-container">
+            <!-- <div class="console-log-container">
                 <h3>コンソールログ</h3>
                 <pre id="console-log" class="console-log"></pre>
-            </div>
+            </div> -->
             <div class="log-container">
                 <div style="display:flex; justify-content: space-between; align-items:center;">
                     <h3 style="margin:0;">ログ</h3>
@@ -189,18 +189,18 @@
             }
         }
 
-        // コンソールログを定期的に更新する関数
-        async function updateConsoleLog() {
-            try {
-                const response = await fetch(buildLogUrl('/get_console_log'));
-                const data = await response.json();
-                const consoleLogElement = document.getElementById('console-log');
-                consoleLogElement.innerHTML = data.logs.join('\n');
-                consoleLogElement.scrollTop = consoleLogElement.scrollHeight; // 最新のログまで自動スクロール
-            } catch (error) {
-                console.error('コンソールログの取得に失敗しました:', error);
-            }
-        }
+        // // コンソールログを定期的に更新する関数
+        // async function updateConsoleLog() {
+        //     try {
+        //         const response = await fetch(buildLogUrl('/get_console_log'));
+        //         const data = await response.json();
+        //         const consoleLogElement = document.getElementById('console-log');
+        //         consoleLogElement.innerHTML = data.logs.join('\n');
+        //         consoleLogElement.scrollTop = consoleLogElement.scrollHeight; // 最新のログまで自動スクロール
+        //     } catch (error) {
+        //         console.error('コンソールログの取得に失敗しました:', error);
+        //     }
+        // }
 
         // フィルタ状態を管理
         let filterDisabled = false;
@@ -212,7 +212,7 @@
             document.getElementById('toggle_filter').textContent = filterDisabled ? 'フィルタ有効' : 'フィルタ解除';
             // すぐにログをリフレッシュ
             updateLog();
-            updateConsoleLog();
+            // updateConsoleLog();
         });
 
         function buildLogUrl(baseUrl) {

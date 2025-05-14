@@ -38,3 +38,6 @@ ENV/
 
 # 一時ファイル
 planning.txt
+
+# BGMフォルダ（サンプルは除く）
+/bgm/

@@ -10,8 +10,6 @@ import subprocess
 import json
 from pathlib import Path
 import re
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
 import concurrent.futures
 import threading
 
@@ -109,10 +107,12 @@ def find_sd_card():
         user = os.environ.get('USER', 'user')
         # 一般的なマウントパスをチェック
         mount_paths = [
+            Path(f'/media/{user}/disk'),  # Raspberry Pi Desktop などの自動マウント
+            Path('/media/disk'),        # 後方互換: /media/disk
             Path(f'/media/{user}'),  # ユーザー固有のマウントポイント
             Path('/media'),          # システム全体のマウントポイント
             Path('/mnt'),            # 別の一般的なマウントポイント
-            Path('/run/media')       # 一部のディストリビューションで使用
+            Path('/run/media'),       # 一部のディストリビューションで使用
         ]
         
         for mount_path in mount_paths:
@@ -438,8 +438,6 @@ def show_uploaded_slideshow(fullscreen=True, recent=True, current_only=False, in
         command.append("--fullscreen")
     if current_only:
         command.append("--current")
-    elif recent:
-        command.append("--recent")
     
     # 追加オプション
     if interval != 5:  # デフォルト値と異なる場合のみ追加
@@ -462,212 +460,21 @@ def show_uploaded_slideshow(fullscreen=True, recent=True, current_only=False, in
     
     try:
         logger.info(f"スライドショーを開始します: {' '.join(command)}")
+        # 環境変数の設定
+        env = os.environ.copy()
+        if 'DISPLAY' not in env:
+            env['DISPLAY'] = ':0'
+        logger.info(f"DISPLAY環境変数: {env.get('DISPLAY')}")
+        
         # バックグラウンドで実行
         if sys.platform == 'win32':
-            subprocess.Popen(command, creationflags=subprocess.CREATE_NEW_CONSOLE)
+            subprocess.Popen(command, creationflags=subprocess.CREATE_NEW_CONSOLE, env=env)
         else:
-            subprocess.Popen(command, start_new_session=True)
+            subprocess.Popen(command, start_new_session=True, env=env)
+            
         logger.info("スライドショーをバックグラウンドで起動しました")
     except Exception as e:
         logger.error(f"スライドショーの起動中にエラーが発生しました: {e}")
-
-class SDCardHandler(FileSystemEventHandler):
-    """
-    SDカードマウントを監視するハンドラー
-    """
-    def __init__(self, album_name=None, show_slideshow=False, current_only=False, interval=5, 
-                random_order=False, no_pending=False, verbose=False, bgm_files=None):
-        self.album_name = album_name
-        self.show_slideshow = show_slideshow
-        self.current_only = current_only
-        self.last_processed = 0
-        self.min_interval = 10  # 最低処理間隔（秒）- 短くして反応性を高める
-        # マウント検知のためのフラグ
-        self.pending_mount_check = False
-        self.mount_check_delay = 2  # マウント完了を確認するための遅延（秒）
-        # スライドショーの表示設定
-        self.fullscreen = True
-        self.recent = True
-        self.interval = interval
-        self.random_order = random_order
-        self.no_pending = no_pending
-        self.verbose = verbose
-        self.bgm_files = bgm_files
-    
-    def on_created(self, event):
-        """
-        ファイル/ディレクトリ作成時のイベントハンドラ
-        """
-        logger.debug(f"作成イベント: {event.src_path}")
-        self._process_event(event)
-    
-    def on_modified(self, event):
-        """
-        ファイル/ディレクトリ変更時のイベントハンドラ
-        """
-        logger.debug(f"変更イベント: {event.src_path}")
-        self._process_event(event)
-    
-    def on_moved(self, event):
-        """
-        ファイル/ディレクトリ移動時のイベントハンドラ
-        """
-        logger.debug(f"移動イベント: {event.src_path} -> {event.dest_path}")
-        self._process_event(event)
-    
-    def _process_event(self, event):
-        """
-        イベント処理の共通ロジック
-        """
-        # ボリュームマウントの可能性があるパターンを確認
-        is_volume_event = False
-        
-        # /Volumes自体か、その直下のディレクトリの場合
-        if sys.platform == 'darwin' and (
-            event.src_path == '/Volumes' or 
-            re.match(r'^/Volumes/[^/]+$', event.src_path)
-        ):
-            is_volume_event = True
-            logger.debug(f"ボリュームイベント検出: {event.src_path}")
-            
-        # ディレクトリ変更のみを処理
-        if not event.is_directory and not is_volume_event:
-            return
-            
-        # ボリュームイベントを検出したら、少し遅延してからチェック（マウント完了を待つ）
-        if is_volume_event and not self.pending_mount_check:
-            logger.info(f"ボリュームイベント検出: {event.src_path} - マウント完了を待機中...")
-            self.pending_mount_check = True
-            
-            # 遅延実行の設定
-            threading.Timer(self.mount_check_delay, self._delayed_volume_check).start()
-            return
-            
-        # 短時間の連続実行を防止
-        current_time = time.time()
-        if current_time - self.last_processed < self.min_interval:
-            return
-        
-        # /Volumesディレクトリ自体の変更の場合は、すべてのサブディレクトリをチェック
-        if event.src_path == '/Volumes' and sys.platform == 'darwin':
-            logger.debug("ボリュームディレクトリの変更を検出しました")
-            self._check_all_volumes()
-            return
-            
-        # SDカードのDCIMフォルダを探す
-        sd_path = None
-        
-        # イベントパスまたはその親ディレクトリにDCIMフォルダがあるかチェック
-        event_path = Path(event.src_path)
-        if _is_valid_sd_root(event_path):
-            sd_path = event_path
-            logger.debug(f"イベントパスにDCIMフォルダを検出: {sd_path}")
-        
-        # 特定のボリュームが見つからない場合は通常の検索
-        if not sd_path:
-            sd_path = find_sd_card()
-            
-        if sd_path and (sd_path / DCIM_PATH).exists():
-            logger.info(f"SDカード検出: {sd_path}")
-            # 順序に沿って処理：写真特定 → スライドショー表示 → アップロード開始
-            success = upload_photos(
-                sd_path / DCIM_PATH, 
-                self.album_name, 
-                self.show_slideshow,  # スライドショー表示を有効に
-                self.fullscreen, 
-                self.recent, 
-                self.current_only,
-                self.interval, 
-                self.random_order, 
-                self.no_pending, 
-                self.verbose, 
-                self.bgm_files
-            )
-            self.last_processed = current_time
-    
-    def _delayed_volume_check(self):
-        """
-        ボリュームマウント完了後の遅延チェック
-        """
-        logger.debug("遅延ボリュームチェックを実行")
-        self.pending_mount_check = False
-        
-        # すべてのボリュームを確認
-        self._check_all_volumes()
-    
-    def _check_all_volumes(self):
-        """
-        すべてのボリュームをチェックして対象のSDカードを探す
-        """
-        if sys.platform == 'darwin':
-            volumes_dir = Path('/Volumes')
-            try:
-                for volume in volumes_dir.iterdir():
-                    logger.debug(f"ボリュームをチェック: {volume}")
-                    if _is_valid_sd_root(volume):
-                        logger.info(f"DCIM フォルダを含むボリュームを発見: {volume}")
-                        # 順序に沿って処理：写真特定 → スライドショー表示 → アップロード開始
-                        success = upload_photos(
-                            volume / DCIM_PATH, 
-                            self.album_name, 
-                            self.show_slideshow,  # スライドショー表示を有効に
-                            self.fullscreen, 
-                            self.recent, 
-                            self.current_only,
-                            self.interval, 
-                            self.random_order, 
-                            self.no_pending, 
-                            self.verbose, 
-                            self.bgm_files
-                        )
-                        self.last_processed = time.time()
-                        break
-            except Exception as e:
-                logger.error(f"ボリュームチェック中のエラー: {e}")
-
-def check_periodically(interval=10, album_name=None, show_slideshow=False, fullscreen=True, recent=True, 
-                     current_only=False, slideshow_interval=5, random_order=False, no_pending=False, 
-                     verbose=False, bgm_files=None, random_bgm=False):
-    """
-    一定間隔でSDカードの存在をチェックし、見つかった場合は写真をアップロード
-    
-    Args:
-        interval (int): チェック間隔（秒）
-        album_name (str): アップロード先のアルバム名（オプション）
-        show_slideshow (bool): アップロード後にスライドショーを表示するかどうか
-        fullscreen (bool): スライドショーをフルスクリーンで表示するかどうか
-        recent (bool): 最新の写真のみ表示するかどうか
-        current_only (bool): 最新の写真のみ表示するかどうか
-        slideshow_interval (int): スライドショーの画像表示間隔（秒）
-        random_order (bool): スライドショーをランダム順で表示するかどうか
-        no_pending (bool): アップロード予定/失敗ファイルを含めないかどうか
-        verbose (bool): 詳細なログを出力するかどうか
-        bgm_files (list): BGMとして再生する音楽ファイルまたはディレクトリのリスト
-        random_bgm (bool): BGMをランダムに再生するかどうか
-    """
-    while True:
-        sd_path = find_sd_card()
-        if sd_path and (sd_path / DCIM_PATH).exists():
-            logger.info(f"SDカード検出: {sd_path}")
-            # 順序に沿って処理：写真特定 → スライドショー表示 → アップロード開始
-            success = upload_photos(
-                sd_path / DCIM_PATH, 
-                album_name, 
-                show_slideshow,  # スライドショー表示を有効に
-                fullscreen, 
-                recent, 
-                current_only,
-                slideshow_interval, 
-                random_order, 
-                no_pending, 
-                verbose,
-                bgm_files,
-                random_bgm=random_bgm
-            )
-        else:
-            logger.info("SDカードが見つかりません")
-        
-        time.sleep(interval)
 
 def main():
     """
@@ -675,10 +482,9 @@ def main():
     """
     parser = argparse.ArgumentParser(description='SDカードから自動的に写真をアップロードする')
     parser.add_argument('--album', type=str, default=DEFAULT_ALBUM, help='アップロード先のアルバム名')
-    parser.add_argument('--watch', action='store_true', help='SDカードの挿入を監視する')
-    parser.add_argument('--interval', type=int, default=0, help='ポーリング間隔（秒）。0 の場合はポーリングを行わない')
     parser.add_argument('--slideshow', action='store_true', help='アップロードと同時にスライドショーを表示する')
     parser.add_argument('--no-fullscreen', action='store_true', help='スライドショーをフルスクリーンで表示しない')
+    parser.add_argument('--fullscreen', action='store_true', help='スライドショーをフルスクリーンで表示する')
     parser.add_argument('--all-photos', action='store_true', help='すべての写真をスライドショーに表示する（デフォルトは最新のみ）')
     parser.add_argument('--current-only', action='store_true', help='最新の写真のみ表示する')
     # スライドショー用の追加オプション
@@ -695,111 +501,40 @@ def main():
         # ルートロガーも含めて DEBUG に変更
         logging.getLogger().setLevel(logging.DEBUG)
 
-    # フルスクリーンモードとrecentモードの設定
-    fullscreen = not args.no_fullscreen
+    # フルスクリーン設定: --fullscreen が指定されていれば優先
+    if args.fullscreen:
+        fullscreen = True
+    else:
+        fullscreen = not args.no_fullscreen
+    
+    # recent モード: --all-photos が指定されていなければ recent=True
     recent = not args.all_photos
     
-    # --bgm オプションが指定されていない場合は BGM 無効
-
-    # まず、現在接続されているSDカードをチェック
+    # SDカードの確認
     sd_path = find_sd_card()
-    if sd_path and (sd_path / DCIM_PATH).exists():
-        logger.info(f"SDカード検出: {sd_path}")
-        # 順序に沿って処理：写真特定 → スライドショー表示 → アップロード開始
-        upload_photos(
-            sd_path / DCIM_PATH, 
-            args.album, 
-            args.slideshow,
-            fullscreen, 
-            recent, 
-            args.current_only,
-            args.slideshow_interval, 
-            args.random, 
-            args.no_pending, 
-            args.verbose, 
-            args.bgm, 
-            args.all_photos,
-            args.random_bgm
-        )
+    if not sd_path or not (sd_path / DCIM_PATH).exists():
+        logger.error("SDカードが見つかりません。SDカードを挿入してから再度実行してください。")
+        return
+        
+    logger.info(f"SDカード検出: {sd_path}")
+    # 写真特定 → スライドショー表示 → アップロード開始
+    upload_photos(
+        sd_path / DCIM_PATH, 
+        args.album, 
+        args.slideshow,
+        fullscreen, 
+        recent, 
+        args.current_only,
+        args.slideshow_interval, 
+        args.random, 
+        args.no_pending, 
+        args.verbose, 
+        args.bgm, 
+        args.all_photos,
+        args.random_bgm
+    )
     
-    # 監視モードが有効な場合
-    if args.watch:
-        logger.info("SDカードの挿入を監視しています...")
-        
-        # macOSの場合は/Volumesディレクトリを監視
-        if sys.platform == 'darwin':
-            path = '/Volumes'
-            
-            # 自動検出したSDカードも直接監視
-            sd_path = find_sd_card()
-            if sd_path and sd_path.exists() and _is_valid_sd_root(sd_path):
-                logger.info(f"自動検出したSDカードを直接監視: {sd_path}")
-                
-        # Linuxの場合は/mediaディレクトリを監視
-        elif sys.platform.startswith('linux'):
-            user = os.environ.get('USER', 'user')
-            path = f'/media/{user}'
-            
-            # パスが存在しない場合の代替パス
-            if not os.path.exists(path):
-                logger.info(f"パス {path} が存在しないため、代替パスを使用します")
-                path = '/media'
-                
-            # ログ出力
-            logger.info(f"SDカード検出用の主要パス: {path}")
-                
-            # Linuxの追加マウントポイントもチェック
-            for additional_path in ['/mnt', '/run/media']:
-                if os.path.exists(additional_path):
-                    logger.info(f"追加マウントポイントを監視: {additional_path}")
-                    
-        # Windowsの場合はドライブ監視は難しいのでポーリングモードを使用
-        else:
-            logger.info("このプラットフォームでは監視モードがサポートされていません。ポーリングモードに切り替えます。")
-            check_periodically(args.interval, args.album, args.slideshow, fullscreen, recent, args.current_only,
-                             args.slideshow_interval, args.random, args.no_pending, args.verbose, args.bgm, args.random_bgm)
-            return
-        
-        # 設定を適用したSDカードハンドラを作成
-        event_handler = SDCardHandler(args.album, args.slideshow, args.current_only, 
-                                    args.slideshow_interval, args.random, args.no_pending, 
-                                    args.verbose, args.bgm)
-        # スライドショーの表示設定
-        event_handler.fullscreen = fullscreen
-        event_handler.recent = recent
-        
-        observer = Observer()
-        
-        # ボリュームディレクトリを監視（再帰的にサブディレクトリも含める）
-        observer.schedule(event_handler, path, recursive=True)
-        
-        # macOSの場合は、自動検出したSDカードも直接監視
-        if sys.platform == 'darwin' and sd_path and sd_path.exists():
-            observer.schedule(event_handler, str(sd_path), recursive=False)
-            
-        # Linuxの場合は、追加マウントポイントも監視
-        elif sys.platform.startswith('linux'):
-            for additional_path in ['/mnt', '/run/media']:
-                if os.path.exists(additional_path):
-                    observer.schedule(event_handler, additional_path, recursive=True)
-        
-        observer.start()
-        
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            observer.stop()
-        observer.join()
-    else:
-        # ポーリングモード（--watch が無効）
-        if args.interval > 0:
-            logger.info(f"{args.interval}秒間隔でSDカードをチェックしています...")
-            check_periodically(args.interval, args.album, args.slideshow, fullscreen, recent, args.current_only,
-                             args.slideshow_interval, args.random, args.no_pending, args.verbose, args.bgm, args.random_bgm)
-        else:
-            # 監視もポーリングも行わず、1回のアップロードで終了
-            logger.info("監視および定期チェックを行わず、1回限りで処理を終了します")
+    logger.info("処理を完了しました。")
 
 if __name__ == "__main__":
     main() 
