@@ -95,6 +95,15 @@ input[type="checkbox"] {
   background-color: #c0392b;
 }
 
+.btn.info {
+  background-color: #1abc9c;
+  color: white;
+}
+
+.btn.info:hover {
+  background-color: #16a085;
+}
+
 .status {
   margin-top: 20px;
   padding: 10px;

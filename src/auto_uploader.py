@@ -661,7 +661,7 @@ def main():
     parser = argparse.ArgumentParser(description='SDカードから自動的に写真をアップロードする')
     parser.add_argument('--album', type=str, default=DEFAULT_ALBUM, help='アップロード先のアルバム名')
     parser.add_argument('--watch', action='store_true', help='SDカードの挿入を監視する')
-    parser.add_argument('--interval', type=int, default=60, help='ポーリング間隔（秒）')
+    parser.add_argument('--interval', type=int, default=0, help='ポーリング間隔（秒）。0 の場合はポーリングを行わない')
     parser.add_argument('--slideshow', action='store_true', help='アップロードと同時にスライドショーを表示する')
     parser.add_argument('--no-fullscreen', action='store_true', help='スライドショーをフルスクリーンで表示しない')
     parser.add_argument('--all-photos', action='store_true', help='すべての写真をスライドショーに表示する（デフォルトは最新のみ）')
@@ -777,10 +777,14 @@ def main():
             observer.stop()
         observer.join()
     else:
-        # ポーリングモード
-        logger.info(f"{args.interval}秒間隔でSDカードをチェックしています...")
-        check_periodically(args.interval, args.album, args.slideshow, fullscreen, recent, args.current_only,
-                         args.slideshow_interval, args.random, args.no_pending, args.verbose, args.bgm, args.random_bgm)
+        # ポーリングモード（--watch が無効）
+        if args.interval > 0:
+            logger.info(f"{args.interval}秒間隔でSDカードをチェックしています...")
+            check_periodically(args.interval, args.album, args.slideshow, fullscreen, recent, args.current_only,
+                             args.slideshow_interval, args.random, args.no_pending, args.verbose, args.bgm, args.random_bgm)
+        else:
+            # 監視もポーリングも行わず、1回のアップロードで終了
+            logger.info("監視および定期チェックを行わず、1回限りで処理を終了します")
 
 if __name__ == "__main__":
     main() 

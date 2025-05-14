@@ -144,8 +144,10 @@ def start_upload():
     try:
         data = request.get_json()
         album_name = data.get('album_name', 'Photo Uploader')
-        watch = data.get('watch', True)
-        interval = data.get('interval', 60)
+        # 監視機能は廃止: デフォルトで無効
+        watch = data.get('watch', False)
+        # ポーリング間隔。0 の場合は監視/ポーリングを行わない
+        interval = data.get('interval', 0)
         slideshow = data.get('slideshow', True)
         fullscreen = data.get('fullscreen', True)
         all_photos = data.get('all_photos', False)
@@ -156,6 +158,20 @@ def start_upload():
         verbose = data.get('verbose', False)
         bgm = data.get('bgm', False)
         
+        # ---------------------------------------------
+        # SDカードの存在を確認
+        # ---------------------------------------------
+        try:
+            from auto_uploader import find_sd_card, DCIM_PATH  # 遅延インポートして依存を最小化
+        except ImportError as ie:
+            logger.error(f"auto_uploader モジュールの読み込みに失敗しました: {ie}")
+            return jsonify({'status': 'error', 'message': '内部エラー: SDカード検出モジュールの読み込みに失敗しました'}), 500
+
+        sd_path = find_sd_card()
+        if not sd_path or not (sd_path / DCIM_PATH).exists():
+            # SDカードが見つからない
+            return jsonify({'status': 'error', 'message': 'SDカードがありません'}), 400
+
         # 起動時間を記録
         global UPLOAD_START_TIME
         UPLOAD_START_TIME = datetime.now()
@@ -186,10 +202,9 @@ def start_upload():
         # オプションを追加
         if album_name:
             command.extend(['--album', album_name])
-        if watch:
-            command.append('--watch')
-        if interval != 60:  # デフォルト値と異なる場合のみ追加
-            command.extend(['--interval', str(interval)])
+        # 監視は使用しないため --watch は付与しない
+        # --interval 0 でポーリングを無効化
+        command.extend(['--interval', '0'])
         if slideshow:
             command.append('--slideshow')
         if not fullscreen:
@@ -303,7 +318,8 @@ def unmount_sd():
                 Path(f'/media/{user}'),
                 Path('/media'),
                 Path('/mnt'),
-                Path('/run/media')
+                Path('/run/media'),
+                Path(f'/media/{user}/disk')
             ]
             candidate_paths = []
             for base in mount_points:
@@ -351,25 +367,29 @@ def get_log():
         if not log_file.exists():
             return jsonify({'logs': []})
         
-        # 最新の100行を取得
+        # クエリパラメータ all=true ならフィルタを無効化
+        all_logs = request.args.get('all', 'false').lower() == 'true'
+        
+        # 取得する行数を決定
+        line_count = 500 if all_logs else 100
+        
+        # 最新の行を取得
         with open(log_file, 'r', encoding='utf-8') as f:
-            logs = f.readlines()[-100:]
+            logs = f.readlines()[-line_count:]
         
         # 空行を削除し、各行の末尾の改行を削除
         logs = [log.strip() for log in logs if log.strip()]
         
-        # 起動時刻以降のログに限定
-        if UPLOAD_START_TIME is not None:
+        # 起動時刻以降のログに限定（フィルタ無効時はスキップ）
+        if (not all_logs) and UPLOAD_START_TIME is not None:
             filtered_logs = []
             for line in logs:
-                # ログ行の先頭は 'YYYY-MM-DD HH:MM:SS - ' 形式
                 try:
                     ts_str = line.split(' - ', 1)[0]
                     log_time = datetime.strptime(ts_str, '%Y-%m-%d %H:%M:%S')
                     if log_time >= UPLOAD_START_TIME:
                         filtered_logs.append(line)
                 except (ValueError, IndexError):
-                    # フォーマット外の行はそのまま含める
                     filtered_logs.append(line)
             logs = filtered_logs
         
@@ -380,48 +400,37 @@ def get_log():
 
 @app.route('/get_console_log')
 def get_console_log():
-    """
-    コンソールログを取得するエンドポイント
-    標準出力と標準エラー出力に送られるログをWebUIに表示する
-    """
+    """コンソールログを取得するエンドポイント"""
     try:
-        # コンソールログファイルのパスを指定
-        # Python標準ライブラリのloggingによって生成される全てのログファイルを収集
+        all_logs = request.args.get('all', 'false').lower() == 'true'
         log_files = [
             Path.home() / '.google_photos_uploader' / 'uploader.log',
             Path.home() / '.google_photos_uploader' / 'slideshow.log'
         ]
         
-        all_logs = []
-        
-        # 各ログファイルから最新の内容を取得
+        line_count = 500 if all_logs else 100
+        all_lines = []
         for log_file in log_files:
             if log_file.exists():
                 with open(log_file, 'r', encoding='utf-8') as f:
-                    logs = f.readlines()[-100:]  # 最新の100行を取得
-                    # 空行を削除し、各行の末尾の改行を削除
-                    logs = [log.strip() for log in logs if log.strip()]
-                    all_logs.extend(logs)
+                    lines = f.readlines()[-line_count:]
+                    lines = [line.strip() for line in lines if line.strip()]
+                    all_lines.extend(lines)
         
-        # 時刻でソート
-        sorted_logs = []
-        for line in all_logs:
-            try:
-                # ログ行の先頭は 'YYYY-MM-DD HH:MM:SS - ' 形式
-                ts_str = line.split(' - ', 1)[0]
-                log_time = datetime.strptime(ts_str, '%Y-%m-%d %H:%M:%S')
-                sorted_logs.append((log_time, line))
-            except (ValueError, IndexError):
-                # フォーマット外の行は一番古い時間（datetime.min）で追加
-                sorted_logs.append((datetime.min, line))
+        if not all_logs:
+            # 時刻でソート
+            tmp = []
+            for line in all_lines:
+                try:
+                    ts_str = line.split(' - ', 1)[0]
+                    log_time = datetime.strptime(ts_str, '%Y-%m-%d %H:%M:%S')
+                    tmp.append((log_time, line))
+                except (ValueError, IndexError):
+                    tmp.append((datetime.min, line))
+            tmp.sort(key=lambda x: x[0], reverse=True)
+            all_lines = [t[1] for t in tmp][:line_count]
         
-        # 時刻でソート
-        sorted_logs.sort(key=lambda x: x[0], reverse=True)
-        
-        # 最新100件に制限
-        logs = [log[1] for log in sorted_logs[:100]]
-        
-        return jsonify({'logs': logs})
+        return jsonify({'logs': all_lines})
     except Exception as e:
         logger.error(f"コンソールログの取得中にエラーが発生しました: {e}")
         return jsonify({'logs': [f"コンソールログの取得中にエラーが発生しました: {str(e)}"]})

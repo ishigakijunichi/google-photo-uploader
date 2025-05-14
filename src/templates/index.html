@@ -57,22 +57,7 @@
                             <label for="album_name">アップロード先アルバム:</label>
                             <input type="text" id="album_name" value="Photo Uploader">
                         </div>
-                        <div class="form-group">
-                            <label>
-                                <input type="checkbox" id="watch" checked>
-                                SDカードの挿入を監視
-                            </label>
-                        </div>
-                        <div class="form-group" id="interval_container">
-                            <label for="interval">チェック間隔（秒）:</label>
-                            <input
-                                type="number"
-                                id="interval"
-                                value="60"
-                                min="1"
-                                max="3600"
-                            >
-                        </div>
+                        <!-- SDカード監視機能は廃止 -->
                         <div class="form-group">
                             <label>
                                 <input type="checkbox" id="slideshow" checked>
@@ -183,7 +168,10 @@
                 <pre id="console-log" class="console-log"></pre>
             </div>
             <div class="log-container">
-                <h3>ログ</h3>
+                <div style="display:flex; justify-content: space-between; align-items:center;">
+                    <h3 style="margin:0;">ログ</h3>
+                    <button id="toggle_filter" class="btn info" style="font-size:12px; padding:6px 10px;">フィルタ解除</button>
+                </div>
                 <div id="log" class="log"></div>
             </div>
         </div>
@@ -191,7 +179,7 @@
         // ログを定期的に更新する関数
         async function updateLog() {
             try {
-                const response = await fetch('/get_log');
+                const response = await fetch(buildLogUrl('/get_log'));
                 const data = await response.json();
                 const logElement = document.getElementById('log');
                 logElement.innerHTML = data.logs.map(log => `<div class="log-entry">${log}</div>`).join('');
@@ -204,7 +192,7 @@
         // コンソールログを定期的に更新する関数
         async function updateConsoleLog() {
             try {
-                const response = await fetch('/get_console_log');
+                const response = await fetch(buildLogUrl('/get_console_log'));
                 const data = await response.json();
                 const consoleLogElement = document.getElementById('console-log');
                 consoleLogElement.innerHTML = data.logs.join('\n');
@@ -214,28 +202,34 @@
             }
         }
 
+        // フィルタ状態を管理
+        let filterDisabled = false;
+
+        // フィルタ切替ボタンのイベントリスナー
+        document.getElementById('toggle_filter').addEventListener('click', () => {
+            filterDisabled = !filterDisabled;
+            // ボタンのラベルを更新
+            document.getElementById('toggle_filter').textContent = filterDisabled ? 'フィルタ有効' : 'フィルタ解除';
+            // すぐにログをリフレッシュ
+            updateLog();
+            updateConsoleLog();
+        });
+
+        function buildLogUrl(baseUrl) {
+            return filterDisabled ? `${baseUrl}?all=true` : baseUrl;
+        }
+
         // 5秒ごとにログを更新
         setInterval(updateLog, 5000);
         // 5秒ごとにコンソールログも更新
         setInterval(updateConsoleLog, 5000);
         
-        // SDカード監視の状態によってチェック間隔の表示を切り替える関数
-        function toggleIntervalVisibility() {
-            const watchEnabled = document.getElementById('watch').checked;
-            const intervalContainer = document.getElementById('interval_container');
-            intervalContainer.style.display = watchEnabled ? 'none' : 'block';
-        }
-        
         // ページ読み込み時に初期状態を設定
         document.addEventListener('DOMContentLoaded', function() {
-            toggleIntervalVisibility();
             checkProcessStatus();
             updateLog(); // 初期ログを表示
             updateConsoleLog(); // 初期コンソールログを表示
         });
-        
-        // 監視チェックボックスの変更イベント
-        document.getElementById('watch').addEventListener('change', toggleIntervalVisibility);
         
         // タブ切り替え
         document.querySelectorAll('.tab').forEach(tab => {
@@ -288,8 +282,6 @@
         document.getElementById('start_upload').addEventListener('click', async () => {
             const data = {
                 album_name: document.getElementById('album_name').value,
-                watch: document.getElementById('watch').checked,
-                interval: parseInt(document.getElementById('interval').value),
                 slideshow: document.getElementById('slideshow').checked,
                 fullscreen: document.getElementById('fullscreen').checked,
                 slideshow_interval: parseInt(document.getElementById('slideshow_interval').value),
