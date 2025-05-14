@@ -1,442 +1,132 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="en">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Google Photos Uploader</title>
+        <title>MomentsUp</title>
         <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-        <style>
-            /* タブUIのスタイル */
-            .tabs {
-                display: flex;
-                margin-bottom: 20px;
-                border-bottom: 1px solid #ccc;
-            }
-            .tab {
-                padding: 10px 20px;
-                cursor: pointer;
-                background-color: #f1f1f1;
-                border: 1px solid #ccc;
-                border-bottom: none;
-                margin-right: 5px;
-                border-radius: 5px 5px 0 0;
-            }
-            .tab.active {
-                background-color: #fff;
-                border-bottom: 1px solid #fff;
-                margin-bottom: -1px;
-                font-weight: bold;
-            }
-            .tab-content {
-                display: none;
-            }
-            .tab-content.active {
-                display: block;
-            }
-        </style>
     </head>
     <body>
         <div class="container">
-            <h1>Google Photos ツール</h1>
-            <div class="tabs">
-                <div class="tab active" data-tab="upload">アップロード</div>
-                <div class="tab" data-tab="slideshow">アルバムを再生</div>
+            <h1>MomentsUp</h1>
+            
+            <div class="control-panel">
+                <div id="status" class="status">Ready</div>
+                <div class="button-group">
+                    <button id="start_upload" class="btn primary">Upload</button>
+                    <button id="stop_upload" class="btn danger">Stop</button>
+                    <button id="unmount_sd" class="btn info">
+                        <div class="eject-icon"></div>
+                    </button>
+                </div>
             </div>
-            <div id="status" class="status"></div>
+
             <!-- アップロードタブ -->
             <div id="upload-tab" class="tab-content active">
                 <div class="control-panel">
-                    <div class="button-group">
-                        <button id="start_upload" class="btn primary">起動</button>
-                        <button id="stop_upload" class="btn danger">停止</button>
-                        <button id="unmount_sd" class="btn warning">SDカードを取り外す</button>
-                    </div>
-                    <div class="section">
-                        <h3>アップロード設定</h3>
-                        <div class="form-group">
-                            <label for="album_name">アップロード先アルバム:</label>
-                            <input type="text" id="album_name" value="Photo Uploader">
-                        </div>
-                        <!-- SDカード監視機能は廃止 -->
-                        <div class="form-group">
-                            <label>
-                                <input type="checkbox" id="slideshow" checked>
-                                スライドショーを表示
-                            </label>
-                        </div>
-                    </div>
-                    <div class="section">
-                        <h3>スライドショー設定</h3>
-                        <div class="form-group">
-                            <label for="slideshow_interval">表示間隔（秒）</label>
-                            <input
-                                type="number"
-                                id="slideshow_interval"
-                                value="5"
-                                min="1"
-                                max="60"
-                            >
-                        </div>
-                        <div class="form-group">
-                            <label>
-                                <input type="checkbox" id="fullscreen" checked>
-                                フルスクリーン表示
-                            </label>
-                        </div>
-                        <div class="form-group">
-                            <label>
-                                <input type="checkbox" id="random">
-                                ランダム順で表示
-                            </label>
-                        </div>
-                        <div class="form-group">
-                            <label>
-                                <input type="checkbox" id="bgm">
-                                BGMを再生
-                            </label>
-                        </div>
-                    </div>
+                    <h3>Upload Settings</h3>
                     <div class="form-group">
-                        <label>
-                            <input type="checkbox" id="verbose">
-                            詳細なログを出力
+                        <label for="album_name">Upload to Album:</label>
+                        <input type="text" id="album_name" value="Photo Uploader">
+                    </div>
+
+                    <h3>Slideshow Settings</h3>
+                    <div class="form-group">
+                        <label for="slideshow_interval">Display Interval (seconds)</label>
+                        <input type="number" id="slideshow_interval" value="5" min="1" max="60">
+                    </div>
+
+                    <div class="switch-label">
+                        <span>Fullscreen Display</span>
+                        <label class="switch">
+                            <input type="checkbox" id="fullscreen" checked>
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+
+                    <div class="switch-label">
+                        <span>Random Order</span>
+                        <label class="switch">
+                            <input type="checkbox" id="random">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+
+                    <div class="switch-label">
+                        <span>Play BGM</span>
+                        <label class="switch">
+                            <input type="checkbox" id="bgm">
+                            <span class="slider"></span>
                         </label>
                     </div>
                 </div>
             </div>
+
             <!-- スライドショータブ -->
             <div id="slideshow-tab" class="tab-content">
                 <div class="control-panel">
                     <div class="button-group">
-                        <button id="start_slideshow" class="btn primary">スライドショー起動</button>
-                        <button id="stop_slideshow" class="btn danger">停止</button>
-                        <button id="fetch_albums" class="btn info">アルバム一覧を取得</button>
+                        <button id="start_slideshow" class="btn primary">Start Slideshow</button>
+                        <button id="stop_slideshow" class="btn danger">Stop</button>
+                        <button id="fetch_albums" class="btn info">Get Albums</button>
                     </div>
+
                     <div class="form-group">
-                        <label for="slideshow_album_select">アルバムを選択:</label>
-                        <select id="slideshow_album_select" style="width: 100%; padding: 8px; margin-bottom: 10px;">
-                            <option value="">アルバムを選択してください</option>
+                        <label for="slideshow_album_select">Select Album:</label>
+                        <select id="slideshow_album_select">
+                            <option value="">Please select an album</option>
                         </select>
                     </div>
+
                     <div class="form-group">
-                        <label for="slideshow_album_name">または直接アルバム名を入力:</label>
-                        <input
-                            type="text"
-                            id="slideshow_album_name"
-                            placeholder="アルバム名を入力"
-                            value="Photo Uploader"
-                        >
+                        <label for="slideshow_album_name">Or enter album name:</label>
+                        <input type="text" id="slideshow_album_name" placeholder="Enter album name" value="Photo Uploader">
                     </div>
+
                     <div class="form-group">
-                        <label for="slideshow_only_interval">表示間隔（秒）</label>
-                        <input
-                            type="number"
-                            id="slideshow_only_interval"
-                            value="5"
-                            min="1"
-                            max="60"
-                        >
+                        <label for="slideshow_only_interval">Display Interval (seconds)</label>
+                        <input type="number" id="slideshow_only_interval" value="5" min="1" max="60">
                     </div>
-                    <div class="form-group">
-                        <label>
+
+                    <div class="switch-label">
+                        <span>Fullscreen Display</span>
+                        <label class="switch">
                             <input type="checkbox" id="slideshow_fullscreen" checked>
-                            フルスクリーン表示
+                            <span class="slider"></span>
                         </label>
                     </div>
-                    <div class="form-group">
-                        <label>
+
+                    <div class="switch-label">
+                        <span>Random Order</span>
+                        <label class="switch">
                             <input type="checkbox" id="slideshow_random">
-                            ランダム順で表示
+                            <span class="slider"></span>
                         </label>
                     </div>
-                    <div class="form-group">
-                        <label>
+
+                    <div class="switch-label">
+                        <span>Play BGM</span>
+                        <label class="switch">
                             <input type="checkbox" id="slideshow_bgm">
-                            BGMを再生
-                        </label>
-                    </div>
-                    <div class="form-group">
-                        <label>
-                            <input type="checkbox" id="slideshow_verbose">
-                            詳細なログを出力
+                            <span class="slider"></span>
                         </label>
                     </div>
                 </div>
             </div>
-            <!-- <div class="console-log-container">
-                <h3>コンソールログ</h3>
-                <pre id="console-log" class="console-log"></pre>
-            </div> -->
+
             <div class="log-container">
                 <div style="display:flex; justify-content: space-between; align-items:center;">
-                    <h3 style="margin:0;">ログ</h3>
-                    <button id="toggle_filter" class="btn info" style="font-size:12px; padding:6px 10px;">フィルタ解除</button>
+                    <h3>Log</h3>
+                    <button id="toggle_filter" class="btn-text">Clear Filter</button>
                 </div>
                 <div id="log" class="log"></div>
             </div>
+
+            <div class="tabs">
+                <div class="tab active" data-tab="upload">Upload</div>
+                <div class="tab" data-tab="slideshow">Play Album</div>
+            </div>
         </div>
-        <script>
-        // ログを定期的に更新する関数
-        async function updateLog() {
-            try {
-                const response = await fetch(buildLogUrl('/get_log'));
-                const data = await response.json();
-                const logElement = document.getElementById('log');
-                logElement.innerHTML = data.logs.map(log => `<div class="log-entry">${log}</div>`).join('');
-                logElement.scrollTop = logElement.scrollHeight; // 最新のログまで自動スクロール
-            } catch (error) {
-                console.error('ログの取得に失敗しました:', error);
-            }
-        }
-
-        // // コンソールログを定期的に更新する関数
-        // async function updateConsoleLog() {
-        //     try {
-        //         const response = await fetch(buildLogUrl('/get_console_log'));
-        //         const data = await response.json();
-        //         const consoleLogElement = document.getElementById('console-log');
-        //         consoleLogElement.innerHTML = data.logs.join('\n');
-        //         consoleLogElement.scrollTop = consoleLogElement.scrollHeight; // 最新のログまで自動スクロール
-        //     } catch (error) {
-        //         console.error('コンソールログの取得に失敗しました:', error);
-        //     }
-        // }
-
-        // フィルタ状態を管理
-        let filterDisabled = false;
-
-        // フィルタ切替ボタンのイベントリスナー
-        document.getElementById('toggle_filter').addEventListener('click', () => {
-            filterDisabled = !filterDisabled;
-            // ボタンのラベルを更新
-            document.getElementById('toggle_filter').textContent = filterDisabled ? 'フィルタ有効' : 'フィルタ解除';
-            // すぐにログをリフレッシュ
-            updateLog();
-            // updateConsoleLog();
-        });
-
-        function buildLogUrl(baseUrl) {
-            return filterDisabled ? `${baseUrl}?all=true` : baseUrl;
-        }
-
-        // 5秒ごとにログを更新
-        setInterval(updateLog, 5000);
-        // 5秒ごとにコンソールログも更新
-        setInterval(updateConsoleLog, 5000);
-        
-        // ページ読み込み時に初期状態を設定
-        document.addEventListener('DOMContentLoaded', function() {
-            checkProcessStatus();
-            updateLog(); // 初期ログを表示
-            updateConsoleLog(); // 初期コンソールログを表示
-        });
-        
-        // タブ切り替え
-        document.querySelectorAll('.tab').forEach(tab => {
-            tab.addEventListener('click', () => {
-                // タブのアクティブ状態を切り替え
-                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-                tab.classList.add('active');
-                
-                // タブコンテンツの表示を切り替え
-                const tabName = tab.getAttribute('data-tab');
-                document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
-                document.getElementById(`${tabName}-tab`).classList.add('active');
-                
-                // ステータスをチェック
-                checkProcessStatus();
-            });
-        });
-        
-        // プロセスのステータスをチェックする関数
-        async function checkProcessStatus() {
-            try {
-                const response = await fetch('/check_status');
-                const data = await response.json();
-                
-                // アップロードとスライドショーのボタンを状態に応じて有効/無効化
-                const uploadRunning = data.uploader_running;
-                const slideshowRunning = data.slideshow_running;
-                
-                document.getElementById('start_upload').disabled = uploadRunning || slideshowRunning;
-                document.getElementById('stop_upload').disabled = !uploadRunning;
-                document.getElementById('start_slideshow').disabled = uploadRunning || slideshowRunning;
-                document.getElementById('stop_slideshow').disabled = !slideshowRunning;
-                
-                // ステータスメッセージを更新
-                if (uploadRunning) {
-                    document.getElementById('status').textContent = 'アップロードが実行中です';
-                } else if (slideshowRunning) {
-                    document.getElementById('status').textContent = 'スライドショーが実行中です';
-                } else {
-                    document.getElementById('status').textContent = '停止中';
-                }
-            } catch (error) {
-                console.error('ステータスの取得に失敗しました:', error);
-            }
-        }
-        
-        // 定期的にプロセスのステータスをチェック
-        setInterval(checkProcessStatus, 5000);
-        
-        document.getElementById('start_upload').addEventListener('click', async () => {
-            const data = {
-                album_name: document.getElementById('album_name').value,
-                slideshow: document.getElementById('slideshow').checked,
-                fullscreen: document.getElementById('fullscreen').checked,
-                slideshow_interval: parseInt(document.getElementById('slideshow_interval').value),
-                random: document.getElementById('random').checked,
-                bgm: document.getElementById('bgm').checked,
-                no_pending: true,
-                verbose: document.getElementById('verbose').checked
-            };
-            
-            try {
-                const response = await fetch('/start_upload', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(data)
-                });
-                
-                const result = await response.json();
-                document.getElementById('status').textContent = result.message;
-                
-                // ステータスを更新
-                checkProcessStatus();
-            } catch (error) {
-                document.getElementById('status').textContent = 'エラーが発生しました: ' + error;
-            }
-        });
-        
-        document.getElementById('stop_upload').addEventListener('click', async () => {
-            try {
-                const response = await fetch('/stop_upload', {
-                    method: 'POST'
-                });
-                
-                const result = await response.json();
-                document.getElementById('status').textContent = result.message;
-                
-                // ステータスを更新
-                checkProcessStatus();
-            } catch (error) {
-                document.getElementById('status').textContent = 'エラーが発生しました: ' + error;
-            }
-        });
-
-        document.getElementById('unmount_sd').addEventListener('click', async () => {
-            try {
-                const response = await fetch('/unmount_sd', {
-                    method: 'POST'
-                });
-                
-                const result = await response.json();
-                document.getElementById('status').textContent = result.message;
-            } catch (error) {
-                document.getElementById('status').textContent = 'エラーが発生しました: ' + error;
-            }
-        });
-        
-        // アルバム一覧を取得する関数
-        async function fetchAlbums() {
-            try {
-                document.getElementById('status').textContent = 'アルバム一覧を取得中...';
-                document.getElementById('fetch_albums').disabled = true;
-                
-                const response = await fetch('/get_albums');
-                const albums = await response.json();
-                
-                if (albums.error) {
-                    document.getElementById('status').textContent = `エラー: ${albums.error}`;
-                    return;
-                }
-                
-                // セレクトボックスをクリア
-                const selectElement = document.getElementById('slideshow_album_select');
-                selectElement.innerHTML = '<option value="">アルバムを選択してください</option>';
-                
-                // アルバムを追加
-                albums.sort((a, b) => a.title.localeCompare(b.title)); // アルバム名でソート
-                albums.forEach(album => {
-                    const option = document.createElement('option');
-                    option.value = album.title;
-                    option.textContent = `${album.title} (${album.itemCount}枚)`;
-                    selectElement.appendChild(option);
-                });
-                
-                document.getElementById('status').textContent = `${albums.length}個のアルバムを取得しました`;
-            } catch (error) {
-                document.getElementById('status').textContent = `アルバム一覧取得中にエラー: ${error}`;
-            } finally {
-                document.getElementById('fetch_albums').disabled = false;
-            }
-        }
-        
-        // アルバム一覧取得ボタンのイベントリスナー
-        document.getElementById('fetch_albums').addEventListener('click', fetchAlbums);
-        
-        // アルバム選択時のイベントリスナー
-        document.getElementById('slideshow_album_select').addEventListener('change', function() {
-            const selectedAlbum = this.value;
-            if (selectedAlbum) {
-                document.getElementById('slideshow_album_name').value = selectedAlbum;
-            }
-        });
-        
-        document.getElementById('start_slideshow').addEventListener('click', async () => {
-            const albumName = document.getElementById('slideshow_album_name').value.trim();
-            if (!albumName) {
-                document.getElementById('status').textContent = 'アルバム名を入力または選択してください';
-                return;
-            }
-            
-            const data = {
-                album_name: albumName,
-                interval: parseInt(document.getElementById('slideshow_only_interval').value),
-                fullscreen: document.getElementById('slideshow_fullscreen').checked,
-                random: document.getElementById('slideshow_random').checked,
-                bgm: document.getElementById('slideshow_bgm').checked,
-                verbose: document.getElementById('slideshow_verbose').checked
-            };
-            
-            try {
-                document.getElementById('status').textContent = 'スライドショーを起動中...';
-                
-                const response = await fetch('/start_slideshow', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(data)
-                });
-                
-                const result = await response.json();
-                document.getElementById('status').textContent = result.message;
-                
-                // ステータスを更新
-                checkProcessStatus();
-            } catch (error) {
-                document.getElementById('status').textContent = 'エラーが発生しました: ' + error;
-            }
-        });
-        
-        document.getElementById('stop_slideshow').addEventListener('click', async () => {
-            try {
-                const response = await fetch('/stop_slideshow', {
-                    method: 'POST'
-                });
-                
-                const result = await response.json();
-                document.getElementById('status').textContent = result.message;
-                
-                // ステータスを更新
-                checkProcessStatus();
-            } catch (error) {
-                document.getElementById('status').textContent = 'エラーが発生しました: ' + error;
-            }
-        });
-        </script>
+        <script src="{{ url_for('static', filename='js/app.js') }}"></script>
     </body>
 </html>

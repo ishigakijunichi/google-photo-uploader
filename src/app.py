@@ -108,10 +108,39 @@ def kill_slideshow_processes(force: bool = False):
     except Exception as e:
         logger.error(f"スライドショープロセス停止中にエラーが発生しました: {e}")
 
+def kill_auto_uploader_processes(force: bool = False):
+    """auto_uploader.py を確実に停止するヘルパー
+
+    Raspberry Pi OS 環境で ``pkill`` がパターンマッチせず残存するケースが報告されたため、
+    psutil を用いて Cmdline にスクリプト名が含まれるプロセスを直接終了させる。
+
+    Args:
+        force: True の場合は SIGKILL (-9) を送る。
+    """
+    try:
+        patterns = ["auto_uploader.py"]
+        sig = signal.SIGKILL if force else signal.SIGTERM
+
+        for proc in psutil.process_iter(["pid", "cmdline"]):
+            cmdline = " ".join(proc.info.get("cmdline") or [])
+            if any(p in cmdline for p in patterns):
+                try:
+                    logger.info(f"アップローダープロセス停止: PID={proc.pid} CMD='{cmdline}' (signal={sig})")
+                    os.kill(proc.pid, sig)
+                except ProcessLookupError:
+                    # 既に終了している
+                    continue
+                except Exception as e:
+                    logger.warning(f"PID {proc.pid} の終了に失敗しました: {e}")
+    except Exception as e:
+        logger.error(f"アップローダープロセス停止中にエラーが発生しました: {e}")
+
 def cleanup():
     """アプリケーション終了時に実行される関数"""
     try:
         # auto_uploader.pyのプロセスを停止
+        kill_auto_uploader_processes(force=False)
+        # 念のため pkill でも補完
         subprocess.run(['pkill', '-f', 'python.*auto_uploader.py'], check=False)
         # slideshow 関連プロセスを停止（補完として pkill も用いる）
         subprocess.run(['pkill', '-f', 'python.*(slideshow|album_slideshow).py'], check=False)
@@ -246,12 +275,23 @@ def start_upload():
 @app.route('/stop_upload', methods=['POST'])
 def stop_upload():
     try:
-        # 実行中のプロセスを終了
-        os.system("pkill -f auto_uploader.py")
-        # slideshow 関連プロセスも確実に停止
-        pkill_status = os.system("pkill -f '(slideshow|album_slideshow)\.py'")
-        logger.debug(f'pkill result code: {pkill_status}')
-        kill_slideshow_processes()
+        # まず SIGTERM で auto_uploader を停止
+        kill_auto_uploader_processes(force=False)
+
+        # slideshow 関連プロセスも確実に停止 (SIGTERM)
+        kill_slideshow_processes(force=False)
+
+        # 少し待機して残存確認
+        time.sleep(1)
+
+        # もしまだ残っていれば SIGKILL を送信
+        if is_process_running('auto_uploader.py'):
+            logger.warning('SIGTERM で auto_uploader が終了しなかったため SIGKILL を送信します')
+            kill_auto_uploader_processes(force=True)
+
+        if is_process_running('slideshow.py') or is_process_running('album_slideshow.py'):
+            logger.warning('SIGTERM でスライドショーが終了しなかったため SIGKILL を送信します')
+            kill_slideshow_processes(force=True)
         
         # 進捗ファイルを削除
         progress_path = Path.home() / '.google_photos_uploader' / 'upload_progress.json'
