@@ -611,37 +611,50 @@ def get_ip_address():
         return '127.0.0.1'  # ローカルホストを返す
 
 def open_browser(url):
-    """
-    指定URLをブラウザで開く
-    
-    Args:
-        url (str): 開くURL
-    """
+    """ブラウザを開く関数"""
     try:
-        # Raspberry Piならchromium-browserを使用
-        if platform.system() == 'Linux' and os.path.exists('/usr/bin/chromium-browser'):
-            # ホームディレクトリに一時的なユーザーデータディレクトリを作成
-            tmp_user_data_dir = str(Path.home() / f".chromium_data_{int(time.time())}")
-            os.makedirs(tmp_user_data_dir, exist_ok=True)
+        # Raspberry Pi向けの最適化
+        if platform.system() == 'Linux':
+            # ユーザーデータディレクトリをホームディレクトリに作成
+            user_data_dir = Path.home() / '.google_photos_uploader' / 'browser_data'
+            user_data_dir.mkdir(parents=True, exist_ok=True)
             
-            # Raspberry Pi向けに最適化された起動オプション
-            subprocess.Popen([
-                'chromium-browser',
-                '--no-sandbox',  # Raspberry Piでは必要
-                '--disable-dev-shm-usage',  # メモリ使用量の最適化
-                '--disable-gpu',  # GPUハードウェアアクセラレーションを無効化
-                '--start-fullscreen',
-                '--disable-features=MediaStreamAPI',
-                f'--user-data-dir={tmp_user_data_dir}',
-                '--no-first-run',
+            # 最適化された起動オプション
+            chrome_options = [
+                '--no-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-gpu',
+                '--disable-software-rasterizer',
+                '--disable-extensions',
+                '--disable-notifications',
+                '--disable-infobars',
+                '--disable-translate',
+                '--disable-features=TranslateUI',
+                '--disable-features=site-per-process',
+                '--disable-features=IsolateOrigins',
+                '--disable-site-isolation-trials',
+                '--disable-web-security',
+                '--disable-features=BlockInsecurePrivateNetworkRequests',
+                '--disable-features=IsolateOrigins,site-per-process',
+                '--disable-features=TranslateUI',
+                '--disable-features=site-per-process',
+                '--disable-features=IsolateOrigins',
+                '--disable-site-isolation-trials',
+                '--disable-web-security',
+                '--disable-features=BlockInsecurePrivateNetworkRequests',
+                f'--user-data-dir={user_data_dir}',
+                '--start-maximized',
+                '--kiosk',
                 url
-            ])
+            ]
+            
+            # Chromeを起動
+            subprocess.Popen(['chromium-browser'] + chrome_options)
         else:
-            # それ以外のプラットフォームではデフォルトブラウザを使用
+            # その他のプラットフォームでは通常の方法でブラウザを開く
             webbrowser.open(url)
-        logger.info(f"ブラウザを開きました: {url}")
     except Exception as e:
-        logger.error(f"ブラウザの起動に失敗しました: {e}")
+        logger.error(f"ブラウザ起動中にエラーが発生しました: {e}")
 
 # Flaskのアクセスログを無効化
 logging.getLogger('werkzeug').setLevel(logging.ERROR)
