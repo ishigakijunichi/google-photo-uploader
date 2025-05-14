@@ -14,21 +14,36 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import concurrent.futures
 import threading
-from google_photos_uploader.uploader import upload_photos as core_upload_photos
-from google_photos_uploader.uploader import _collect_media_files
-from slideshow import load_uploaded_files
 
+# --------------------------------------------------
+# ログディレクトリの準備
+# --------------------------------------------------
+_LOG_DIR = Path.home() / '.google_photos_uploader'
+_LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+# --------------------------------------------------
 # ロギングの設定
+# 先に logging.basicConfig() を実行しておかないと、後から import する
+# slideshow.py などが logging.basicConfig() を呼び出した際に FileHandler
+# が登録されず、uploader.log が生成されない問題が発生する。
+# `force=True` で既存設定を上書きし、確実に FileHandler を追加する。
+# --------------------------------------------------
 logging.basicConfig(
     level=logging.INFO,  # デフォルトは INFO。--verbose 指定時に DEBUG に変更
     format='%(asctime)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(Path.home() / '.google_photos_uploader' / 'uploader.log')
-    ]
+        logging.FileHandler(_LOG_DIR / 'uploader.log', encoding='utf-8')
+    ],
+    force=True  # 既存設定を上書き
 )
 logger = logging.getLogger(__name__)
+
+# 遅延インポート — ログ設定後に行うことで FileHandler が有効になる
+from google_photos_uploader.uploader import upload_photos as core_upload_photos  # noqa: E402
+from google_photos_uploader.uploader import _collect_media_files  # noqa: E402
+from slideshow import load_uploaded_files  # noqa: E402
 
 # 設定値
 DCIM_PATH = "DCIM"  # DCIMフォルダのパス
