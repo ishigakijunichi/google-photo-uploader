@@ -619,18 +619,20 @@ def open_browser(url):
             user_data_dir = Path.home() / '.google_photos_uploader' / 'browser_data'
             user_data_dir.mkdir(parents=True, exist_ok=True)
             
-            # Raspberry Pi 5 では大半のフラグは不要。必要最低限で起動する。
-            chrome_options = [
-                '--use-gl=egl',          # EGL/GLES を強制（ANGLE 初期化失敗を回避）
-                '--no-sandbox',          # root で実行する場合のみ必須
-                '--disable-dev-shm-usage',  # /dev/shm が 64 MB の環境向け
-                f'--user-data-dir={user_data_dir}',
-                '--kiosk',               # フルスクリーン
-                url
-            ]
+            # # Raspberry Pi 5 では大半のフラグは不要。必要最低限で起動する。
+            # chrome_options = [
+            #     '--use-gl=egl',          # EGL/GLES を強制（ANGLE 初期化失敗を回避）
+            #     '--no-sandbox',          # root で実行する場合のみ必須
+            #     '--disable-dev-shm-usage',  # /dev/shm が 64 MB の環境向け
+            #     f'--user-data-dir={user_data_dir}',
+            #     '--kiosk',               # フルスクリーン
+            #     url
+            # ]
             
             # Chromeを起動
-            subprocess.Popen(['chromium-browser'] + chrome_options)
+            # subprocess.Popen(['chromium-browser'] + chrome_options)
+            subprocess.Popen(['chromium-browser'])
+            
         else:
             # その他のプラットフォームでは通常の方法でブラウザを開く
             webbrowser.open(url)
