@@ -619,32 +619,13 @@ def open_browser(url):
             user_data_dir = Path.home() / '.google_photos_uploader' / 'browser_data'
             user_data_dir.mkdir(parents=True, exist_ok=True)
             
-            # 最適化された起動オプション
+            # Raspberry Pi 5 では大半のフラグは不要。必要最低限で起動する。
             chrome_options = [
-                '--no-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-gpu',
-                '--disable-software-rasterizer',
-                '--disable-extensions',
-                '--disable-notifications',
-                '--disable-infobars',
-                '--disable-translate',
-                '--disable-features=TranslateUI',
-                '--disable-features=site-per-process',
-                '--disable-features=IsolateOrigins',
-                '--disable-site-isolation-trials',
-                '--disable-web-security',
-                '--disable-features=BlockInsecurePrivateNetworkRequests',
-                '--disable-features=IsolateOrigins,site-per-process',
-                '--disable-features=TranslateUI',
-                '--disable-features=site-per-process',
-                '--disable-features=IsolateOrigins',
-                '--disable-site-isolation-trials',
-                '--disable-web-security',
-                '--disable-features=BlockInsecurePrivateNetworkRequests',
+                '--use-gl=egl',          # EGL/GLES を強制（ANGLE 初期化失敗を回避）
+                '--no-sandbox',          # root で実行する場合のみ必須
+                '--disable-dev-shm-usage',  # /dev/shm が 64 MB の環境向け
                 f'--user-data-dir={user_data_dir}',
-                '--start-maximized',
-                '--kiosk',
+                '--kiosk',               # フルスクリーン
                 url
             ]
             
