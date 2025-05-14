@@ -620,7 +620,22 @@ def open_browser(url):
     try:
         # Raspberry Piならchromium-browserを使用
         if platform.system() == 'Linux' and os.path.exists('/usr/bin/chromium-browser'):
-            subprocess.Popen(['chromium-browser', '--start-fullscreen', url])
+            # ホームディレクトリに一時的なユーザーデータディレクトリを作成
+            tmp_user_data_dir = str(Path.home() / f".chromium_data_{int(time.time())}")
+            os.makedirs(tmp_user_data_dir, exist_ok=True)
+            
+            # Raspberry Pi向けに最適化された起動オプション
+            subprocess.Popen([
+                'chromium-browser',
+                '--no-sandbox',  # Raspberry Piでは必要
+                '--disable-dev-shm-usage',  # メモリ使用量の最適化
+                '--disable-gpu',  # GPUハードウェアアクセラレーションを無効化
+                '--start-fullscreen',
+                '--disable-features=MediaStreamAPI',
+                f'--user-data-dir={tmp_user_data_dir}',
+                '--no-first-run',
+                url
+            ])
         else:
             # それ以外のプラットフォームではデフォルトブラウザを使用
             webbrowser.open(url)
