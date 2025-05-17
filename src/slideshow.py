@@ -12,6 +12,7 @@ import tkinter as tk
 from tkinter import ttk
 from PIL import Image, ImageTk, ExifTags
 from datetime import datetime, timedelta
+import socket
 # 共通メディアユーティリティ
 from google_photos_uploader.utils.media import BackgroundMusicPlayer, AUDIO_EXTENSIONS, VideoPlayer
 import cv2
@@ -35,6 +36,18 @@ VIDEO_EXTENSIONS = {'.mp4', '.mov', '.avi', '.wmv', '.mkv'}
 # --------------------------------------------------
 # スライドショー本体
 # --------------------------------------------------
+
+def get_ip_address():
+    """IPアドレスを取得する"""
+    try:
+        # ローカルIPアドレスを取得
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "IPアドレス取得エラー"
 
 class SlideshowApp(BaseSlideshowApp):
     """
@@ -64,8 +77,12 @@ class SlideshowApp(BaseSlideshowApp):
         self.image_label = tk.Label(root, bg="black")
         self.image_label.pack(fill=tk.BOTH, expand=True)
         
+        # IPアドレス表示用のラベル（画像の上に重ねて配置）
+        self.ip_label = tk.Label(root, text=f"IP: {get_ip_address()}", bg="black", fg="gray", font=("Helvetica", 14), anchor="ne")
+        self.ip_label.place(relx=0.99, rely=0.01, anchor="ne")
+        
         # アップロード進捗表示用のラベル（画像の上に重ねて配置）
-        self.status_label = tk.Label(root, text="", bg="black", fg="white", font=("Helvetica", 14), anchor="sw")
+        self.status_label = tk.Label(root, text="", bg="black", fg="gray", font=("Helvetica", 14), anchor="sw")
         # place を用いて下部に重ねる
         self.status_label.place(relx=0.01, rely=0.97, anchor="sw")
         
@@ -78,6 +95,25 @@ class SlideshowApp(BaseSlideshowApp):
         if self.random_order:
             random.shuffle(self.image_files)
         
+        # 最初の画像を先読みしてから表示
+        self.status_label.config(text="画像を読み込み中...")
+        self.root.update()  # ラベルを即時更新
+        
+        # 最初の画像を先読み
+        first_file = self.image_files[0]
+        if Path(first_file).suffix.lower() not in VIDEO_EXTENSIONS:
+            try:
+                img = Image.open(first_file)
+                sw = self.root.winfo_width() or 3840
+                sh = self.root.winfo_height() or 2160
+                if sw > 0 and sh > 0:
+                    img.thumbnail((sw, sh), Image.Resampling.LANCZOS)
+                photo = ImageTk.PhotoImage(img)
+                self.image_cache[first_file] = photo
+            except Exception as e:
+                logger.error(f"最初の画像の読み込みに失敗: {e}")
+        
+        # 最初のファイルを表示
         self.show_file()
         
         # 進捗表示の更新を開始
@@ -526,17 +562,6 @@ def load_current_upload_files():
         files = progress.get('files', [])
         # 存在するファイルのみ返す
         existing = [p for p in files if os.path.exists(p)]
-        
-        # 最大100枚に制限（SDカード表示用）
-        if len(existing) > 100:
-            logger.info(f"スライドショー表示のため {len(existing)} ファイルを100枚に制限します")
-            existing = existing[:100]
-            
-            # 進捗ファイルも更新して、表示枚数を合わせる
-            progress["files"] = existing
-            progress["total"] = len(existing)
-            with open(progress_path, 'w', encoding='utf-8') as f:
-                json.dump(progress, f)
         
         logger.info(f"現在アップロード中のファイル {len(existing)} 件を読み込みました")
         return existing

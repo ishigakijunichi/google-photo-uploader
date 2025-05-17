@@ -55,6 +55,8 @@ class BaseSlideshowApp:
         self.root.configure(bg="black")
         if fullscreen:
             self.root.attributes("-fullscreen", True)
+            # カーソルを非表示
+            self.root.config(cursor="none")
             # ESC または q で終了
             self.root.bind("<Escape>", lambda e: self.root.destroy())
             self.root.bind("<q>", lambda e: self.root.destroy())
