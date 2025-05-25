@@ -97,6 +97,7 @@ def get_credentials() -> Optional[Credentials]:
                             port=port,
                             open_browser=True,
                             prompt="consent",
+                            access_type="offline",
                             success_message="認証が完了しました。ウィンドウを閉じてください。",
                         )
                         logger.info("ブラウザを使用した認証が完了しました")

@@ -35,7 +35,7 @@ API_BASE_URL = 'https://photoslibrary.googleapis.com/v1'
 # 認証情報のパス
 CREDENTIALS_DIR = Path.home() / '.google_photos_uploader'
 TOKEN_FILE = CREDENTIALS_DIR / 'token.json'
-CREDENTIALS_FILE = Path(__file__).parent / 'credentials.json'
+CREDENTIALS_FILE = CREDENTIALS_DIR / 'credentials.json'
 
 def get_credentials():
     """Google API認証情報を取得"""
@@ -64,7 +64,8 @@ def get_credentials():
                 
             flow = InstalledAppFlow.from_client_secrets_file(
                 CREDENTIALS_FILE, SCOPES)
-            creds = flow.run_local_server(port=0)
+            # access_type='offline' と prompt='consent' を設定して refresh_token を取得
+            creds = flow.run_local_server(port=0, access_type="offline", prompt="consent")
         
         # トークンを保存
         CREDENTIALS_DIR.mkdir(parents=True, exist_ok=True)

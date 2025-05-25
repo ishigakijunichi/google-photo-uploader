@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Union
 
 import requests
 from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
 
 from ..auth import SCOPES
 
@@ -13,6 +14,24 @@ logger = logging.getLogger(__name__)
 
 # Google Photos APIのエンドポイント
 API_BASE_URL = 'https://photoslibrary.googleapis.com/v1'
+
+# --------------------------------------------------
+# 内部ヘルパー: アクセストークンの自動リフレッシュ
+# --------------------------------------------------
+
+def _ensure_valid_credentials(creds: Credentials) -> None:
+    """必要に応じてアクセストークンをリフレッシュする
+
+    Args:
+        creds: google.oauth2.credentials.Credentials オブジェクト
+    """
+    try:
+        if creds and (not creds.valid or creds.expired):
+            if creds.refresh_token:
+                creds.refresh(Request())
+    except Exception as e:
+        # リフレッシュ失敗時でも後続で 401 を検知できるようにログのみ
+        logger.error(f"アクセストークンのリフレッシュに失敗: {e}")
 
 def get_mime_type(file_path: Union[str, Path]) -> str:
     """ファイルのMIMEタイプを取得
@@ -45,6 +64,9 @@ def upload_media(file_path: Union[str, Path], creds: Credentials, token_only: bo
         return None if token_only else False
     
     try:
+        # ---------- A. トークン有効性チェック ----------
+        _ensure_valid_credentials(creds)
+
         # ファイルのMIMEタイプを推定
         mime_type = get_mime_type(file_path)
         
@@ -94,6 +116,7 @@ def create_media_item(upload_token: str, file_name: str, creds: Credentials, alb
         bool: 成功した場合はTrue
     """
     try:
+        _ensure_valid_credentials(creds)
         # リクエストヘッダーを設定
         headers = {
             'Authorization': f'Bearer {creds.token}',
@@ -142,6 +165,7 @@ def get_or_create_album(album_name: str, creds: Credentials) -> Optional[str]:
         Optional[str]: アルバムID。失敗した場合はNone
     """
     try:
+        _ensure_valid_credentials(creds)
         # 既存のアルバムを検索
         headers = {
             'Authorization': f'Bearer {creds.token}',
@@ -195,6 +219,9 @@ def batch_create_media_items(tokens: List[str], album_name: Optional[str], creds
         return {"success": [], "failed": []}
     
     try:
+        # A. トークン有効性チェック
+        _ensure_valid_credentials(creds)
+
         # リクエストヘッダーを設定
         headers = {
             'Authorization': f'Bearer {creds.token}',

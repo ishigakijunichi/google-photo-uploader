@@ -14,6 +14,7 @@ from .service import (
     batch_create_media_items as gp_batch_create,
 )
 from .utils import SUPPORTED_EXTENSIONS
+from google.auth.transport.requests import Request
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +33,17 @@ _creds_lock = threading.Lock()
 def _get_credentials():
     global _cached_creds
     with _creds_lock:
+        # 1. キャッシュが無い or 無効 -> 取得
         if _cached_creds is None or not _cached_creds.valid:
             logger.debug("認証情報を新規取得します")
+            _cached_creds = get_credentials()
+
+        # 2. 有効期限切れの場合はリフレッシュ
+        try:
+            if _cached_creds and _cached_creds.expired and _cached_creds.refresh_token:
+                _cached_creds.refresh(Request())
+        except Exception as e:
+            logger.error(f"認証情報のリフレッシュに失敗: {e}")
             _cached_creds = get_credentials()
         return _cached_creds
 
