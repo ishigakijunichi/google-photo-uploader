@@ -113,6 +113,8 @@ document.getElementById('start_upload').addEventListener('click', async () => {
         slideshow_interval: parseInt(document.getElementById('slideshow_interval').value),
         random: document.getElementById('random').checked,
         bgm: document.getElementById('bgm').checked,
+        // Upload & Play ボタンでは必ずスライドショーを起動する
+        slideshow: true,
         no_pending: true
     };
 
