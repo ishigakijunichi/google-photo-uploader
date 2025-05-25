@@ -70,10 +70,10 @@ def find_sd_card(volume_name: str = "PHOTO_UPLOAD_SD") -> Optional[Path]:
         drives = win32api.GetLogicalDriveStrings().split('\000')[:-1]
         for drive in drives:
             try:
-                volume_name = win32api.GetVolumeInformation(drive)[0]
-                if volume_name == volume_name:
+                vol_name = win32api.GetVolumeInformation(drive)[0]
+                if vol_name == volume_name:
                     return Path(drive)
-            except:
+            except Exception:
                 continue
                 
     return None
